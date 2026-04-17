@@ -5,6 +5,8 @@ export * from './queries/interactions.js';
 export * from './queries/attachments.js';
 export * from './queries/identity.js';
 export * from './queries/sessions.js';
+export * from './queries/costs.js';
+export * from './queries/transcripts.js';
 
 // Re-export common Drizzle operators so downstream packages don't need
 // their own drizzle-orm dep. This keeps the dependency graph tidy and

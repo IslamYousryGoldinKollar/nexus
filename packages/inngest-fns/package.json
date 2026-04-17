@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@nexus/db": "workspace:*",
+    "@nexus/services": "workspace:*",
     "@nexus/shared": "workspace:*",
     "inngest": "^3.27.5",
     "zod": "^3.23.8"

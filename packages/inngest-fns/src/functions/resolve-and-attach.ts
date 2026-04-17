@@ -5,11 +5,15 @@ import {
   findContactByIdentifier,
   getDb,
   interactions as interactionsTable,
+  listAttachmentsForInteraction,
   setInteractionContact,
   upsertPendingIdentifier,
 } from '@nexus/db';
 import { inngest } from '../client.js';
 import { extractIdentifier } from './extract-identifier.js';
+
+// MIME prefixes that qualify for transcription.
+const TRANSCRIBABLE_MIME_PREFIXES = ['audio/', 'video/'];
 
 /**
  * Phase 2: resolve identity, attach interaction to a session, schedule
@@ -134,11 +138,34 @@ export const resolveAndAttach = inngest.createFunction(
       });
     }
 
+    // ---- 6. Emit transcription request for any audio/video attachments ---
+    const transcribable = await step.run('find-transcribable-attachments', async () => {
+      const db = getDb();
+      const atts = await listAttachmentsForInteraction(db, interactionId);
+      return atts.filter((a) =>
+        TRANSCRIBABLE_MIME_PREFIXES.some((p) => a.mimeType.toLowerCase().startsWith(p)),
+      );
+    });
+
+    if (transcribable.length > 0) {
+      await step.sendEvent(
+        'emit-transcription',
+        transcribable.map((a) => ({
+          name: 'nexus/transcription.requested' as const,
+          data: {
+            attachmentId: a.id,
+            interactionId,
+          },
+        })),
+      );
+    }
+
     return {
       status,
       contactId,
       sessionId,
       identifierKind: identified.kind,
+      transcriptionEmitted: transcribable.length,
     };
   },
 );
