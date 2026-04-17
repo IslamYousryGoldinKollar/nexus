@@ -29,9 +29,9 @@ See [`docs/architecture.md`](docs/architecture.md) for the full design.
 
 ### Prerequisites
 
-- Node.js `>= 20.11.0` (`.nvmrc` is set; use `nvm use`)
-- pnpm `>= 9.0.0` (`corepack enable` or `npm i -g pnpm@9`)
-- A Neon Postgres project (free tier fine for dev) — or any Postgres 14+
+- Node.js `>= 20.11.0` (`.nvmrc` pinned to 22.11.0 LTS; use `nvm use`)
+- pnpm `>= 9.0.0` (`corepack enable` activates the pinned version)
+- A Supabase project (`eu-central-1` recommended) — or any Postgres 14+
 - Inngest CLI for local workflow development (`npx inngest-cli@latest dev`)
 
 ### Setup
@@ -116,12 +116,13 @@ Set env vars in the Vercel dashboard under the project's **Settings → Environm
 pnpm dlx inngest-cli@latest deploy --url https://nexus.goldinkollar.com/api/inngest
 ```
 
-### Neon migrations (production)
+### Supabase migrations (production)
 
-Migrations run automatically in CI on merge to `main` (see `.github/workflows/ci.yml`). To apply them manually against a specific DB:
+Migrations run automatically in CI on merge to `main` (see `.github/workflows/ci.yml`). To apply them manually against the production Supabase DB:
 
 ```bash
-DATABASE_URL_UNPOOLED=<neon-unpooled-url> pnpm db:migrate
+DATABASE_URL_UNPOOLED="postgres://postgres.<ref>:<pwd>@aws-0-eu-central-1.pooler.supabase.com:5432/postgres" \
+  pnpm db:migrate
 ```
 
 ---

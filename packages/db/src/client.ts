@@ -1,32 +1,55 @@
-import { neon, neonConfig } from '@neondatabase/serverless';
-import { drizzle } from 'drizzle-orm/neon-http';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
 import * as schema from './schema/index.js';
 
 /**
- * Singleton Drizzle client backed by Neon's serverless driver.
+ * Singleton Drizzle client backed by postgres-js.
  *
- * Uses `neon-http` (HTTP fetch) which is optimal for Vercel serverless
- * functions — no connection pooling concerns, per-request TCP.
+ * We target Supabase Postgres 17. Two connection strings exist:
  *
- * For long-running workloads (scripts, Inngest background workers) prefer
- * `neon-serverless` with the WebSocket driver — add a second factory later.
+ * - `DATABASE_URL`         — pgbouncer-pooled, port 6543, `sslmode=require`.
+ *                             Use this for app runtime (Next.js request handlers,
+ *                             Inngest functions). Transaction-mode pooling, so
+ *                             prepared statements are disabled via `prepare: false`.
+ *
+ * - `DATABASE_URL_UNPOOLED` — direct connection, port 5432. Use this for
+ *                             migrations, long-running scripts, seeding.
+ *
+ * See: https://supabase.com/docs/guides/database/connecting-to-postgres
  */
 
-neonConfig.fetchConnectionCache = true;
+type Mode = 'pooled' | 'unpooled';
 
 let _db: ReturnType<typeof createDb> | null = null;
+let _dbUnpooled: ReturnType<typeof createDb> | null = null;
 
-function createDb(connectionString: string) {
-  const sql = neon(connectionString);
-  return drizzle(sql, { schema, casing: 'snake_case' });
+function createDb(connectionString: string, mode: Mode) {
+  const client = postgres(connectionString, {
+    // pgbouncer transaction-mode doesn't support prepared statements.
+    prepare: mode === 'unpooled',
+    max: mode === 'unpooled' ? 1 : 10,
+    idle_timeout: 20,
+    connect_timeout: 10,
+  });
+  return drizzle(client, { schema, casing: 'snake_case' });
 }
 
+/** App-runtime client — pooled connection, fast per-request. */
 export function getDb() {
   if (_db) return _db;
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL is not set');
-  _db = createDb(url);
+  _db = createDb(url, 'pooled');
   return _db;
+}
+
+/** Migration/script client — direct connection, supports transactions + DDL. */
+export function getDbUnpooled() {
+  if (_dbUnpooled) return _dbUnpooled;
+  const url = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL;
+  if (!url) throw new Error('DATABASE_URL_UNPOOLED is not set');
+  _dbUnpooled = createDb(url, 'unpooled');
+  return _dbUnpooled;
 }
 
 export type Database = ReturnType<typeof createDb>;

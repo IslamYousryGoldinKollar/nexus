@@ -27,9 +27,14 @@ export const serverEnvSchema = z.object({
         .filter(Boolean),
     ),
 
-  // Database
+  // Database (Supabase Postgres)
   DATABASE_URL: z.string().url(),
   DATABASE_URL_UNPOOLED: z.string().url().optional(),
+
+  // Supabase (auth + storage + realtime surfaces the DB sits on)
+  SUPABASE_URL: z.string().url().optional(),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
 
   // Redis
   UPSTASH_REDIS_REST_URL: z.string().url().optional(),
