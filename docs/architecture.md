@@ -48,7 +48,7 @@ Meaning lives in threads, not atoms. A voice note by itself is a fragment; the s
      │
      ▼
 ┌─── STATE LAYER ────────────────────────────────────────────────────────┐
-│ Neon Postgres (Drizzle)  │  Upstash Redis (cache/locks)  │  R2 (blobs)  │
+│ Supabase Postgres (Drizzle) · Upstash Redis (cache/locks) · R2 (blobs)  │
 └────┬────────────────────────────────────────────────────────────────────┘
      │
      ▼
@@ -193,7 +193,7 @@ Full spec in `docs/mobile-app.md` (written in Phase 7).
 | Drizzle over Prisma | Type safety + raw SQL escape hatch; thinner at this scale. |
 | Inngest over QStash/BullMQ | Multi-step durable workflows with replay; we need `sleep 30m` as a first-class op. |
 | Claude Sonnet 4.5 with prompt caching | Reasoning quality + cached system prompt reduces cost 40-60% per run. |
-| Neon + branching | Cheap serverless; branching for safe migrations and preview deploys. |
+| Supabase Postgres 17 | Managed PG + free auth/storage/realtime; branching for safe CI migrations; agent can provision and migrate via MCP. |
 | pnpm + Turbo | Fast monorepo builds; Vercel's native support. |
 | Android only (no iOS) | iOS blocks call recording at OS level; single platform keeps scope sane. |
 | Mobile primary / Telegram fallback | User preference (see plan file). Telegram loses its "primary HITL" status from the original spec. |

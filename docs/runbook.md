@@ -11,6 +11,6 @@ Runbook lives here. Filled out against real incidents as phases land. Top of min
 - **Backfill a missed webhook** — Phase 1 (`scripts/replay-webhook.ts`)
 - **Circuit-break LLM budget** — Phase 4 (how to temporarily raise + audit)
 - **Revoke a paired device** — Phase 7 (`DELETE /api/app/devices/:id` + FCM deregister)
-- **Recover from Neon branch divergence** — Phase 0 addendum (drizzle-kit repair steps)
+- **Recover from Supabase branch divergence** — Phase 0 addendum (drizzle-kit repair steps)
 
 Each of these gets its own H2 when implemented.

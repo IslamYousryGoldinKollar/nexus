@@ -16,7 +16,7 @@ Phase 0 lays down the skeleton. Nothing here processes real client data yet — 
 
 ### Packages
 - **`@nexus/shared`** — Zod schemas for every Inngest event, channel/enum constants, `parseServerEnv()` fail-fast validator.
-- **`@nexus/db`** — Drizzle schema v1 with all 12 tables from the original spec PLUS the 4 architectural additions from the plan file (`users`, `devices`, `device_pairing_tokens`, `notifications`, `cost_events`). Neon HTTP client wrapper. `drizzle.config.ts` and `scripts/migrate.ts`.
+- **`@nexus/db`** — Drizzle schema v1 with all 12 tables from the original spec PLUS the 4 architectural additions from the plan file (`users`, `devices`, `device_pairing_tokens`, `notifications`, `cost_events`). `postgres-js` client wrapper (pooled + unpooled). `drizzle.config.ts`, `scripts/migrate.ts`, `scripts/seed.ts`.
 - **`@nexus/inngest-fns`** — Typed Inngest client bound to the `@nexus/shared` event schemas. One placeholder function (`hello`) proves the pipeline.
 
 ### Next.js 15 app (`apps/web`)
@@ -65,20 +65,14 @@ Until `pnpm install` runs, the IDE reports `Cannot find module 'zod'`, `Cannot f
 ### `packages/shared` exports raw TS, not compiled JS
 To keep dev velocity high, the shared packages `main` their TS source files and rely on Next.js's `transpilePackages` option. For a future NPM publish we'd add a proper `tsup` or `tsc` build step, but we don't need it now.
 
-### Next.js 15 + React 19 RC
-Next 15 ships on React 19 RC. The `package.json` pins `19.0.0-rc-66855b96-20241106` + uses the `types-react` / `types-react-dom` overrides pattern to avoid `@types/react@18` leaking in through transitive deps. When React 19 stable lands we bump and remove the overrides.
+### Next.js 15 + React 19 (stable)
+Next 15.1+ ships on React 19 stable. The `package.json` pins `^19.0.0` for `react` / `react-dom` with matching `@types/react@^19.0.0` to keep the IDE and builds aligned.
 
 ### Webhook stubs are `phase: 0` no-ops
 Every ingestion route returns `{ ok: true, phase: 0 }` after a minimal signature check (where we can already do one without real logic, e.g., Telegram secret-token header, WhatsApp hub-verify-token handshake, phone/teams bearer token). **Phase 1 will replace each with real HMAC verification + persistence.**
 
-### Drizzle migrations not generated yet
-The schema exists; `pnpm db:generate` hasn't been run because it requires a real `DATABASE_URL`. First thing to do after getting Neon credentials:
-
-```bash
-DATABASE_URL=postgres://... DATABASE_URL_UNPOOLED=postgres://... pnpm db:generate
-git add packages/db/drizzle
-git commit -m "chore(db): generate initial migration"
-```
+### Drizzle migrations applied via Supabase MCP
+The schema is live on the Supabase `nexus` project (ref `clwvamwweevvmqyfqkzq`, `eu-central-1`). 17 tables created + RLS enabled (no policies = deny-all to anon; service_role bypasses). The migration file is checked in at `packages/db/drizzle/0000_smiling_joshua_kane.sql` so CI can dry-run it on every PR.
 
 CI's migration-dryrun job will enforce this stays in sync thereafter.
 
@@ -103,10 +97,13 @@ CI's migration-dryrun job will enforce this stays in sync thereafter.
 - [x] README with local dev instructions
 - [x] Docs/architecture.md + this phase doc
 - [x] CI pipeline (lint / typecheck / test / migration dry-run)
-- [ ] Deployed to staging Vercel URL — **blocked on account access from Islam**
-- [ ] Initial Drizzle migration generated against Neon — **blocked on DB URL from Islam**
+- [x] Initial Drizzle migration generated + applied to Supabase `nexus`
+- [x] RLS enabled on every table (security posture for Phase 0)
+- [x] Super-admin user (`islam.yousry@goldinkollar.com`) seeded
+- [ ] Deployed to staging Vercel URL — **blocked: user needs to run `vercel link` + provide env vars**
+- [ ] Pushed to GitHub — **blocked: user needs to create repo**
 
-The two unchecked items are external-dependency blockers. Once Islam provides Neon/Vercel access, both unblock in an hour.
+Remaining unchecked items are credential-paste operations; see [`onboarding.md`](./onboarding.md).
 
 ---
 
