@@ -1,24 +1,75 @@
-import { NextResponse, type NextRequest } from 'next/server';
+import { type NextRequest } from 'next/server';
+import { safeStringEqual } from '@nexus/shared';
+import { ingestTelegramUpdate } from '@/lib/channels/telegram/ingest';
+import { telegramUpdate } from '@/lib/channels/telegram/schema';
+import { serverEnv } from '@/lib/env';
+import { log } from '@/lib/logger';
+import { parseJsonFromBytes, readRawBody } from '@/lib/raw-body';
+import { ack, signatureFailed } from '@/lib/webhook-response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * Telegram Bot API webhook — Phase 0 stub.
+ * Telegram Bot API webhook.
  *
- * Dual purpose:
- *   (a) ingesting messages a client sends us via Telegram (channel=telegram).
- *   (b) delivering admin-group actions (approve/reject button callbacks).
+ * Security: Telegram's `X-Telegram-Bot-Api-Secret-Token` header is set when
+ * we register the webhook via `setWebhook?secret_token=…`. We reject any
+ * request whose header doesn't match TELEGRAM_WEBHOOK_SECRET using a
+ * constant-time comparison.
  *
- * Phase 1 will verify the `X-Telegram-Bot-Api-Secret-Token` header against
- * TELEGRAM_WEBHOOK_SECRET and fan out to grammY handlers.
+ * Phase 1: inbound messages → `interactions` rows + downloaded media.
+ * Phase 9 adds the approval-callback_query handlers.
  */
 export async function POST(req: NextRequest) {
-  const secret = req.headers.get('x-telegram-bot-api-secret-token');
-  const expected = process.env.TELEGRAM_WEBHOOK_SECRET;
-  if (expected && secret !== expected) {
-    return new NextResponse('Unauthorized', { status: 401 });
+  const expected = serverEnv.TELEGRAM_WEBHOOK_SECRET;
+  if (!expected) {
+    log.error('telegram.webhook.no_secret_configured');
+    return signatureFailed('telegram');
   }
-  await req.json().catch(() => ({}));
-  return NextResponse.json({ ok: true, phase: 0 });
+
+  const provided = req.headers.get('x-telegram-bot-api-secret-token') ?? '';
+  if (!safeStringEqual(provided, expected)) {
+    log.warn('telegram.signature.invalid', { hasHeader: !!provided });
+    return signatureFailed('telegram');
+  }
+
+  const raw = await readRawBody(req);
+  let payload: unknown;
+  try {
+    payload = parseJsonFromBytes(raw);
+  } catch (err) {
+    log.warn('telegram.body.invalid_json', { err: (err as Error).message });
+    return ack({ ignored: 'invalid_json' });
+  }
+
+  const parsed = telegramUpdate.safeParse(payload);
+  if (!parsed.success) {
+    log.warn('telegram.schema.mismatch', {
+      issues: parsed.error.issues.slice(0, 5).map((i) => ({
+        path: i.path.join('.'),
+        message: i.message,
+      })),
+    });
+    return ack({ ignored: 'schema_mismatch' });
+  }
+
+  try {
+    const outcomes = await ingestTelegramUpdate(parsed.data);
+    const inserted = outcomes.filter((o) => o.inserted).length;
+    const skipped = outcomes.filter((o) => o.skipped).length;
+    log.info('telegram.webhook.ingested', {
+      updateId: parsed.data.update_id,
+      total: outcomes.length,
+      inserted,
+      skipped,
+    });
+    return ack({ ingested: inserted, skipped });
+  } catch (err) {
+    log.error('telegram.webhook.ingest_failed', {
+      err: (err as Error).message,
+      stack: (err as Error).stack,
+    });
+    return ack({ error: 'ingest_failed' });
+  }
 }
