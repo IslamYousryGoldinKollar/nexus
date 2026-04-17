@@ -1,3 +1,4 @@
+import type { NextRequest } from 'next/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const SECRET = 'telegram-webhook-secret';

@@ -4,6 +4,7 @@ import type {
   InjazSyncRequestedEvent,
   InteractionIngestedEvent,
   ProposalCreatedEvent,
+  SessionCooldownHeartbeatEvent,
   SessionReasoningRequestedEvent,
   SystemErrorEvent,
   TranscriptionRequestedEvent,
@@ -17,6 +18,7 @@ import type {
 type Events = {
   'nexus/interaction.ingested': InteractionIngestedEvent;
   'nexus/identifier.seen': IdentifierSeenEvent;
+  'nexus/session.cooldown.heartbeat': SessionCooldownHeartbeatEvent;
   'nexus/session.reasoning.requested': SessionReasoningRequestedEvent;
   'nexus/proposal.created': ProposalCreatedEvent;
   'nexus/transcription.requested': TranscriptionRequestedEvent;
