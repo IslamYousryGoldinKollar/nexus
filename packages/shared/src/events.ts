@@ -71,6 +71,20 @@ export const injazSyncRequestedEvent = z.object({
 });
 export type InjazSyncRequestedEvent = z.infer<typeof injazSyncRequestedEvent>;
 
+// Heartbeat fired on every new interaction attached to a session.
+// The `onSessionCooldown` Inngest function is configured to DEBOUNCE on
+// this event keyed by sessionId — so if another heartbeat arrives within
+// the cooldown window, the timer resets. After N minutes of silence the
+// handler emits `nexus/session.reasoning.requested`.
+export const sessionCooldownHeartbeatEvent = z.object({
+  name: z.literal('nexus/session.cooldown.heartbeat'),
+  data: z.object({
+    sessionId: z.string().uuid(),
+    interactionId: z.string().uuid(),
+  }),
+});
+export type SessionCooldownHeartbeatEvent = z.infer<typeof sessionCooldownHeartbeatEvent>;
+
 // Generic error event — any pipeline stage can emit this.
 export const systemErrorEvent = z.object({
   name: z.literal('nexus/system.error'),
