@@ -47,6 +47,9 @@ importers:
       '@nexus/inngest-fns':
         specifier: workspace:*
         version: link:../../packages/inngest-fns
+      '@nexus/services':
+        specifier: workspace:*
+        version: link:../../packages/services
       '@nexus/shared':
         specifier: workspace:*
         version: link:../../packages/shared

@@ -112,3 +112,20 @@ export function safeStringEqual(a: string, b: string): boolean {
   const bb = encoder.encode(b);
   return timingSafeEqual(ab, bb);
 }
+
+/**
+ * SHA-256 a string and return lower-case hex.
+ *
+ * Used by Phase 5 magic-link auth to store token hashes (never the raw
+ * token bytes) in Postgres. Deterministic + cheap; web crypto is fine
+ * for non-cryptographic uniqueness here since the token bytes themselves
+ * are 256 bits of entropy.
+ */
+export async function sha256Hex(input: string | Uint8Array): Promise<string> {
+  const data = typeof input === 'string' ? encoder.encode(input) : input;
+  const buf = await globalThis.crypto.subtle.digest(
+    'SHA-256',
+    data as unknown as ArrayBuffer,
+  );
+  return bytesToHex(new Uint8Array(buf));
+}

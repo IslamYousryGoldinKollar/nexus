@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
+import type Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { computeClaudeCostUsd, getAnthropicClient, SONNET_4_5 } from './anthropic.js';
 

@@ -69,3 +69,31 @@ export const devicePairingTokens = pgTable('device_pairing_tokens', {
 
 export type DevicePairingToken = typeof devicePairingTokens.$inferSelect;
 export type NewDevicePairingToken = typeof devicePairingTokens.$inferInsert;
+
+/**
+ * Single-use magic-link tokens for admin sign-in (Phase 5).
+ *
+ * Token bytes are stored hashed (sha-256) so a stolen DB dump can't be
+ * replayed. Comparison happens by hashing the URL token and looking up
+ * the row — constant-time compare guaranteed by the unique index.
+ */
+export const magicLinkTokens = pgTable(
+  'magic_link_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: text('email').notNull(),
+    tokenHash: text('token_hash').notNull().unique(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    requestedIp: text('requested_ip'),
+    requestedUserAgent: text('requested_user_agent'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    emailIdx: index('magic_link_tokens_email_idx').on(t.email),
+    expiresIdx: index('magic_link_tokens_expires_idx').on(t.expiresAt),
+  }),
+);
+
+export type MagicLinkToken = typeof magicLinkTokens.$inferSelect;
+export type NewMagicLinkToken = typeof magicLinkTokens.$inferInsert;

@@ -17,6 +17,7 @@
     "@aws-sdk/s3-request-presigner": "^3.691.0",
     "@nexus/db": "workspace:*",
     "@nexus/inngest-fns": "workspace:*",
+    "@nexus/services": "workspace:*",
     "@nexus/shared": "workspace:*",
     "@radix-ui/react-slot": "^1.1.1",
     "class-variance-authority": "^0.7.1",
