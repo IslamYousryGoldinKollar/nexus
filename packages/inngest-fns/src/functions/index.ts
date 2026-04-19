@@ -1,3 +1,4 @@
+import { dailyDigest } from './daily-digest.js';
 import { hello } from './hello.js';
 import { notifyOnProposal } from './notify-on-proposal.js';
 import { reasonSession } from './reason-session.js';
@@ -15,6 +16,7 @@ import { transcribeAttachment } from './transcribe-attachment.js';
  * Phase 4: + reason-session
  * Phase 6: + sync-to-injaz
  * Phase 9: + notify-on-proposal
+ * Phase 11: + daily-digest
  */
 export const functions = [
   hello,
@@ -25,9 +27,11 @@ export const functions = [
   reasonSession,
   syncToInjaz,
   notifyOnProposal,
+  dailyDigest,
 ] as const;
 
 export {
+  dailyDigest,
   hello,
   notifyOnProposal,
   onSessionCooldown,
