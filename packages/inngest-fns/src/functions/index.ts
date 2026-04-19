@@ -1,4 +1,5 @@
 import { hello } from './hello.js';
+import { notifyOnProposal } from './notify-on-proposal.js';
 import { reasonSession } from './reason-session.js';
 import { resolveAndAttach } from './resolve-and-attach.js';
 import { onSessionCooldown, sessionSweep } from './session-cooldown.js';
@@ -13,6 +14,7 @@ import { transcribeAttachment } from './transcribe-attachment.js';
  * Phase 3: + transcribe-attachment
  * Phase 4: + reason-session
  * Phase 6: + sync-to-injaz
+ * Phase 9: + notify-on-proposal
  */
 export const functions = [
   hello,
@@ -22,10 +24,12 @@ export const functions = [
   transcribeAttachment,
   reasonSession,
   syncToInjaz,
+  notifyOnProposal,
 ] as const;
 
 export {
   hello,
+  notifyOnProposal,
   onSessionCooldown,
   reasonSession,
   resolveAndAttach,

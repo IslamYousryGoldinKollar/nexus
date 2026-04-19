@@ -1,5 +1,6 @@
 import { type NextRequest } from 'next/server';
 import { safeStringEqual } from '@nexus/shared';
+import { handleTelegramCallback } from '@/lib/channels/telegram/approval';
 import { ingestTelegramUpdate } from '@/lib/channels/telegram/ingest';
 import { telegramUpdate } from '@/lib/channels/telegram/schema';
 import { serverEnv } from '@/lib/env';
@@ -52,6 +53,25 @@ export async function POST(req: NextRequest) {
       })),
     });
     return ack({ ignored: 'schema_mismatch' });
+  }
+
+  // Phase 9 — process approval button taps before the ingest path skips them.
+  if (parsed.data.callback_query) {
+    try {
+      const cb = parsed.data.callback_query as {
+        id: string;
+        from: { id: number; username?: string };
+        data?: string;
+        message?: { message_id: number; chat: { id: number } };
+      };
+      await handleTelegramCallback(cb);
+      return ack({ callback: 'handled' });
+    } catch (err) {
+      log.error('telegram.callback.handler_failed', {
+        err: (err as Error).message,
+      });
+      return ack({ callback: 'handler_failed' });
+    }
   }
 
   try {
