@@ -2,6 +2,7 @@ import { hello } from './hello.js';
 import { reasonSession } from './reason-session.js';
 import { resolveAndAttach } from './resolve-and-attach.js';
 import { onSessionCooldown, sessionSweep } from './session-cooldown.js';
+import { syncToInjaz } from './sync-to-injaz.js';
 import { transcribeAttachment } from './transcribe-attachment.js';
 
 /**
@@ -11,6 +12,7 @@ import { transcribeAttachment } from './transcribe-attachment.js';
  * Phase 2: + session-cooldown / session-sweep
  * Phase 3: + transcribe-attachment
  * Phase 4: + reason-session
+ * Phase 6: + sync-to-injaz
  */
 export const functions = [
   hello,
@@ -19,6 +21,7 @@ export const functions = [
   sessionSweep,
   transcribeAttachment,
   reasonSession,
+  syncToInjaz,
 ] as const;
 
 export {
@@ -27,5 +30,6 @@ export {
   reasonSession,
   resolveAndAttach,
   sessionSweep,
+  syncToInjaz,
   transcribeAttachment,
 };
