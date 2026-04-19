@@ -1,3 +1,6 @@
 packages:
   - "apps/*"
   - "packages/*"
+# apps/android is a Kotlin/Gradle project — pnpm ignores it because there's
+# no package.json. Keep it inside the monorepo for tooling discoverability.
+# apps/teams-extension (Phase 10) is also pnpm-aware; it ships a package.json.

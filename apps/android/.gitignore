@@ -1,0 +1,16 @@
+# Android Studio + Gradle build artifacts
+.gradle/
+build/
+local.properties
+.idea/
+captures/
+*.iml
+.cxx/
+.kotlin/
+
+# Firebase
+google-services.json
+
+# Keystores (commit only encrypted via SOPS or git-crypt if needed)
+*.jks
+*.keystore
