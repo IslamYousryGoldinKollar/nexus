@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Nexus Teams Bridge — Options</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; max-width: 480px; margin: 24px auto; padding: 0 16px; }
+    h1 { font-size: 18px; margin-bottom: 4px; }
+    p.muted { color: #666; margin-top: 0; }
+    label { display: block; margin: 16px 0 4px; font-weight: 500; }
+    input[type=text], input[type=password] { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+    button { margin-top: 16px; padding: 8px 16px; font-size: 14px; background: #0F172A; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+    .row { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+    .status { margin-top: 12px; font-size: 12px; color: #16a34a; }
+  </style>
+</head>
+<body>
+  <h1>Nexus Teams Bridge</h1>
+  <p class="muted">Forward MS Teams DMs to your Nexus instance.</p>
+
+  <label for="apiBaseUrl">Nexus base URL</label>
+  <input id="apiBaseUrl" type="text" placeholder="https://nexus.goldinkollar.com" />
+
+  <label for="apiKey">Teams ingest API key</label>
+  <input id="apiKey" type="password" placeholder="paste TEAMS_INGEST_API_KEY" />
+
+  <label for="selfUserId">Your Teams user id</label>
+  <input id="selfUserId" type="text" placeholder="optional — used to label outbound vs inbound" />
+
+  <div class="row">
+    <input id="enabled" type="checkbox" />
+    <label for="enabled" style="margin: 0; font-weight: 400;">Forwarding enabled</label>
+  </div>
+
+  <button id="save">Save</button>
+  <p id="status" class="status"></p>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

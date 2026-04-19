@@ -1,27 +1,69 @@
-import { NextResponse, type NextRequest } from 'next/server';
+import { type NextRequest } from 'next/server';
+import { safeStringEqual } from '@nexus/shared';
+import { ingestTeamsMessage } from '@/lib/channels/teams/ingest';
+import { teamsIngestSchema } from '@/lib/channels/teams/schema';
+import { serverEnv } from '@/lib/env';
+import { log } from '@/lib/logger';
+import { ack, signatureFailed, badRequest } from '@/lib/webhook-response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * MS Teams ingest — Phase 0 stub.
+ * POST /api/ingest/teams
  *
- * Phase 10 target is a Chrome extension that captures transcripts from
- * `teams.microsoft.com` and POSTs them here. Optional future path:
- * Microsoft Graph change-notification subscription for online meetings.
+ * Auth: Bearer TEAMS_INGEST_API_KEY (constant-time compare).
+ * Body: TeamsIngestPayload (one DOM-scraped message at a time).
  *
- * Phase 1/10 will verify `TEAMS_INGEST_API_KEY` and persist one
- * `interaction` per meeting segment.
+ * The Chrome extension is intentionally dumb: it streams one message
+ * per request. De-duplication happens server-side via upsertInteraction.
  */
 export async function POST(req: NextRequest) {
-  const auth = req.headers.get('authorization');
-  const expected = process.env.TEAMS_INGEST_API_KEY;
-  if (expected) {
-    const bearer = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
-    if (bearer !== expected) {
-      return new NextResponse('Unauthorized', { status: 401 });
-    }
+  const expected = serverEnv.TEAMS_INGEST_API_KEY;
+  if (!expected) {
+    log.error('teams.no_key_configured', {});
+    return signatureFailed('teams');
   }
-  await req.json().catch(() => ({}));
-  return NextResponse.json({ ok: true, phase: 0 });
+
+  const auth = req.headers.get('authorization') ?? '';
+  const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  if (!safeStringEqual(bearer, expected)) {
+    log.warn('teams.auth.invalid', { hasHeader: !!auth });
+    return signatureFailed('teams');
+  }
+
+  let payload: unknown;
+  try {
+    payload = await req.json();
+  } catch {
+    return badRequest('invalid_json');
+  }
+
+  const parsed = teamsIngestSchema.safeParse(payload);
+  if (!parsed.success) {
+    log.warn('teams.schema.mismatch', {
+      issues: parsed.error.issues.slice(0, 5).map((i) => ({
+        path: i.path.join('.'),
+        message: i.message,
+      })),
+    });
+    return badRequest('schema_mismatch');
+  }
+
+  try {
+    const result = await ingestTeamsMessage(parsed.data);
+    log.info('teams.ingested', {
+      messageId: parsed.data.messageId,
+      inserted: result.inserted,
+      hasAttachment: !!result.attachmentId,
+    });
+    return ack({
+      interactionId: result.interactionId,
+      inserted: result.inserted,
+      attachmentId: result.attachmentId,
+    });
+  } catch (err) {
+    log.error('teams.ingest_failed', { err: (err as Error).message });
+    return ack({ error: 'ingest_failed' });
+  }
 }

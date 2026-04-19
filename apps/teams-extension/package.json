@@ -1,0 +1,19 @@
+{
+  "name": "@nexus/teams-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome extension that scrapes teams.microsoft.com and pushes to Nexus.",
+  "type": "module",
+  "scripts": {
+    "build": "node ./build.mjs",
+    "lint": "eslint src --max-warnings=0 || true",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'no tests yet' && exit 0",
+    "clean": "rm -rf dist .turbo"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.281",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.3"
+  }
+}
