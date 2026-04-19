@@ -1,14 +1,16 @@
 import { hello } from './hello.js';
+import { reasonSession } from './reason-session.js';
 import { resolveAndAttach } from './resolve-and-attach.js';
 import { onSessionCooldown, sessionSweep } from './session-cooldown.js';
 import { transcribeAttachment } from './transcribe-attachment.js';
 
 /**
- * All Inngest functions the web app should register with the serve endpoint.
+ * All Inngest functions the web app registers with the serve endpoint.
  *
- * Phase 1 had a placeholder logger for `interaction.ingested`; Phase 2
- * replaced it with `resolveAndAttach` (same function id). Phase 3 adds
- * `transcribeAttachment` which runs in parallel with session attachment.
+ * Phase 1: resolve-and-attach (id=interaction-ingested)
+ * Phase 2: + session-cooldown / session-sweep
+ * Phase 3: + transcribe-attachment
+ * Phase 4: + reason-session
  */
 export const functions = [
   hello,
@@ -16,11 +18,13 @@ export const functions = [
   onSessionCooldown,
   sessionSweep,
   transcribeAttachment,
+  reasonSession,
 ] as const;
 
 export {
   hello,
   onSessionCooldown,
+  reasonSession,
   resolveAndAttach,
   sessionSweep,
   transcribeAttachment,
