@@ -20,6 +20,7 @@
     "@nexus/services": "workspace:*",
     "@nexus/shared": "workspace:*",
     "@radix-ui/react-slot": "^1.1.1",
+    "@supabase/supabase-js": "^2.45.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "inngest": "^3.27.5",
