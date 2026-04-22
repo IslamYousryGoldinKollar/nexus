@@ -44,18 +44,37 @@ export async function startBridge(): Promise<void> {
   sock.ev.on('creds.update', saveCreds);
 
   // --- Connection lifecycle ---
+  let pairCodeRequested = false;
   sock.ev.on('connection.update', async (u) => {
     const { connection, lastDisconnect, qr } = u;
     if (qr) {
       log.info('--- pair this device ---');
       qrcode.generate(qr, { small: true });
-      // Optional: use the phone-number pairing code flow (easier on servers)
-      if (env.pairPhoneNumber && !sock.authState.creds.registered) {
+      // Also expose the raw `qr` string so the operator can paste into
+      // any QR generator (e.g. https://www.qrcode-monkey.com/) when the
+      // terminal ASCII render is too small to scan.
+      log.info({ qrString: qr }, 'qr.raw (paste into any QR generator)');
+      // Phone-number pairing code flow. Baileys is strict about the number
+      // format — it must be pure digits (country code + subscriber),
+      // no `+`, no spaces, no dashes. We normalize defensively.
+      //
+      // Only request ONCE per connection. Re-requesting on each QR refresh
+      // churns WA's rate limiter and has been seen to cause "couldn't link"
+      // on the phone side.
+      if (env.pairPhoneNumber && !sock.authState.creds.registered && !pairCodeRequested) {
+        pairCodeRequested = true;
+        const digitsOnly = env.pairPhoneNumber.replace(/\D+/g, '');
         try {
-          const code = await sock.requestPairingCode(env.pairPhoneNumber);
-          log.info({ pairingCode: code }, 'pair-code.ready (enter in WhatsApp → Linked Devices)');
+          const code = await sock.requestPairingCode(digitsOnly);
+          log.info(
+            { pairingCode: code, number: digitsOnly },
+            'pair-code.ready (enter in WhatsApp → Linked Devices)',
+          );
         } catch (err) {
-          log.warn({ err: (err as Error).message }, 'pair-code.failed');
+          log.warn(
+            { err: (err as Error).message, number: digitsOnly },
+            'pair-code.failed (fall back to QR scan above)',
+          );
         }
       }
     }
