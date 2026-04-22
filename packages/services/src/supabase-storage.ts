@@ -21,9 +21,12 @@ export interface SupabaseStorageCreds {
 }
 
 export function supabaseStorageCredsFromEnv(): SupabaseStorageCreds | null {
-  const url = process.env.SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const bucket = process.env.SUPABASE_STORAGE_BUCKET;
+  // .trim() protects against trailing newlines/whitespace from env vars —
+  // a common issue when pasting values into dashboards (we've been bitten
+  // by this twice: HMAC secret and bucket name).
+  const url = process.env.SUPABASE_URL?.trim();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const bucket = process.env.SUPABASE_STORAGE_BUCKET?.trim();
   if (!url || !serviceRoleKey || !bucket) return null;
   return { url, serviceRoleKey, bucket };
 }
