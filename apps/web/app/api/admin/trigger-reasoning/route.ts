@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { getDb, sessions, interactions as interactionsTable, eq, and } from '@nexus/db';
+import { getDb, sessions, interactions as interactionsTable, eq } from '@nexus/db';
 import { inngest } from '@nexus/inngest-fns';
 
 export const runtime = 'nodejs';
@@ -77,7 +77,7 @@ export async function GET(req: NextRequest) {
           name: 'nexus/session.reasoning.requested',
           data: {
             sessionId: session.id,
-            reason: 'manual_trigger',
+            trigger: 'manual',
           },
         });
 
