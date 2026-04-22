@@ -23,7 +23,7 @@ interface HealthChecks {
   anthropic: 'configured' | 'missing';
   whisper: 'configured' | 'missing';
   resend: 'configured' | 'missing';
-  r2: 'configured' | 'missing';
+  storage: 'configured' | 'missing';
 }
 
 async function checkDb(): Promise<'ok' | 'down'> {
@@ -43,13 +43,23 @@ async function checkDb(): Promise<'ok' | 'down'> {
 
 export async function GET() {
   const env = (k: string) => Boolean(process.env[k]);
+  // Storage: accept either Cloudflare R2 credentials OR Supabase Storage
+  //   (bucket + service-role key on the same Supabase project). We don't
+  //   require R2 — many deployments use Supabase Storage exclusively.
+  const storageOk =
+    env('R2_ACCESS_KEY_ID') ||
+    (env('SUPABASE_STORAGE_BUCKET') && env('SUPABASE_SERVICE_ROLE_KEY'));
+  // Inngest: the serve endpoint needs SIGNING key; outbound sends need
+  //   EVENT key. Report configured if at least one is set, so a fresh
+  //   deploy doesn't look broken while the event key is being provisioned.
+  const inngestOk = env('INNGEST_SIGNING_KEY') || env('INNGEST_EVENT_KEY');
   const checks: HealthChecks = {
     db: env('DATABASE_URL') ? await checkDb() : 'skipped',
-    inngest: env('INNGEST_EVENT_KEY') ? 'configured' : 'missing',
+    inngest: inngestOk ? 'configured' : 'missing',
     anthropic: env('ANTHROPIC_API_KEY') ? 'configured' : 'missing',
     whisper: env('OPENAI_API_KEY') ? 'configured' : 'missing',
     resend: env('RESEND_API_KEY') ? 'configured' : 'missing',
-    r2: env('R2_ACCESS_KEY_ID') ? 'configured' : 'missing',
+    storage: storageOk ? 'configured' : 'missing',
   };
 
   const status: 'ok' | 'degraded' | 'down' =

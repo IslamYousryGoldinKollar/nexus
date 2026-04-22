@@ -1,0 +1,31 @@
+app = "nexus-wa-bridge"
+primary_region = "fra"  # Frankfurt — close to Supabase eu-central-1
+kill_signal = "SIGTERM"
+kill_timeout = "10s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  LOG_LEVEL = "info"
+  WA_BRIDGE_AUTH_DIR = "/app/auth"
+
+# No public HTTP service — the bridge only makes outbound requests.
+# We disable the default :8080 so Fly won't expect a listener.
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[deploy]
+  strategy = "immediate"  # re-pairing is disruptive — don't rolling-deploy
+
+# Optional: attach a 1 GB volume for the hot auth cache. Not strictly
+# required because we mirror auth to Supabase Storage, but it avoids
+# re-hydrating on every restart.
+# [mounts]
+#   source = "wa_bridge_data"
+#   destination = "/app/auth"

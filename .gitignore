@@ -57,3 +57,5 @@ apps/android/.idea/
 # Misc
 *.pem
 *.key
+.vercel
+.env*.local
