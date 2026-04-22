@@ -84,7 +84,10 @@ export async function forwardMessages(envelope: ForwardEnvelope): Promise<void> 
         body,
       });
       if (res.ok) {
-        log.debug({ count: envelope.messages.length, attempt }, 'forward.ok');
+        log.info(
+          { count: envelope.messages.length, attempt, status: res.status },
+          'forward.ok',
+        );
         return;
       }
       const txt = await res.text().catch(() => '');
