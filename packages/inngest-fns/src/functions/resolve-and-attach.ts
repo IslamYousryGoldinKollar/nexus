@@ -34,7 +34,7 @@ export const resolveAndAttach = inngest.createFunction(
     name: 'Resolve identity + attach session (Phase 2)',
     // Limit concurrent resolution per contact so we don't race ourselves
     // on the session-extend path. `null` bucket + 8 slots is plenty.
-    concurrency: { limit: 8 },
+    concurrency: { limit: 5 },
   },
   { event: 'nexus/interaction.ingested' },
   async ({ event, step, logger }) => {
