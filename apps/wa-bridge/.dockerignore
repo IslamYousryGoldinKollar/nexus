@@ -6,3 +6,5 @@ auth
 .git
 .DS_Store
 *.log
+**/._*
+.DS_Store

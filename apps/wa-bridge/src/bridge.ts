@@ -10,6 +10,7 @@ import qrcode from 'qrcode-terminal';
 import { useRemoteAuthState } from './auth-store.js';
 import { env } from './env.js';
 import { log } from './logger.js';
+import { setPairCode, setQr } from './qr-server.js';
 import {
   forwardMessages,
   type BaileysMessagePayload,
@@ -54,6 +55,8 @@ export async function startBridge(): Promise<void> {
       // any QR generator (e.g. https://www.qrcode-monkey.com/) when the
       // terminal ASCII render is too small to scan.
       log.info({ qrString: qr }, 'qr.raw (paste into any QR generator)');
+      // Expose to the in-process HTTP server for browser-scannable view.
+      setQr(qr);
       // Phone-number pairing code flow. Baileys is strict about the number
       // format — it must be pure digits (country code + subscriber),
       // no `+`, no spaces, no dashes. We normalize defensively.
@@ -66,6 +69,7 @@ export async function startBridge(): Promise<void> {
         const digitsOnly = env.pairPhoneNumber.replace(/\D+/g, '');
         try {
           const code = await sock.requestPairingCode(digitsOnly);
+          setPairCode(code);
           log.info(
             { pairingCode: code, number: digitsOnly },
             'pair-code.ready (enter in WhatsApp → Linked Devices)',

@@ -3,6 +3,10 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
+# Baileys pulls libsignal as a git-hosted npm dep and some native
+# modules (e.g. `sharp`) need python + build tools to compile.
+RUN apk add --no-cache git python3 make g++
+
 # Install dependencies
 COPY package.json tsconfig.json ./
 RUN npm install --no-audit --no-fund

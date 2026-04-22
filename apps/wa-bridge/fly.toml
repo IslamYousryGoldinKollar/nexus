@@ -10,9 +10,24 @@ kill_timeout = "10s"
   NODE_ENV = "production"
   LOG_LEVEL = "info"
   WA_BRIDGE_AUTH_DIR = "/app/auth"
+  PORT = "8080"
 
-# No public HTTP service — the bridge only makes outbound requests.
-# We disable the default :8080 so Fly won't expect a listener.
+# Tiny internal HTTP server that exposes the live pairing QR as an
+# auto-refreshing HTML page. Token-gated via ?t=<WA_BRIDGE_HMAC_SECRET>.
+# Only needed during pairing; after that you can safely ignore it.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
 
 [[vm]]
   size = "shared-cpu-1x"
