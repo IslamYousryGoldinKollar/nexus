@@ -62,9 +62,27 @@ export async function transcribeWithWhisper(args: {
   }
   const bytes = new Uint8Array(await downloadRes.arrayBuffer());
 
+  // OpenAI detects file format from the *filename extension* (not Content-Type).
+  // Supported: flac, m4a, mp3, mp4, mpeg, mpga, oga, ogg, wav, webm.
+  // WhatsApp voice notes are `audio/ogg; codecs=opus` → we must pass `.ogg`
+  // or the API returns 400 "Unrecognized file format".
+  const extFromMime = (() => {
+    const m = mimeType.toLowerCase().split(';')[0]?.trim() ?? '';
+    if (m.includes('ogg')) return 'ogg';
+    if (m.includes('mp4')) return 'mp4';
+    if (m.includes('mpeg')) return 'mp3';
+    if (m.includes('mp3')) return 'mp3';
+    if (m.includes('wav') || m.includes('wave')) return 'wav';
+    if (m.includes('webm')) return 'webm';
+    if (m.includes('flac')) return 'flac';
+    if (m.includes('m4a') || m.includes('aac')) return 'm4a';
+    return 'ogg'; // sensible default for WhatsApp
+  })();
+  const fileName = args.fileName ?? `audio.${extFromMime}`;
+
   const blob = new Blob([bytes], { type: mimeType });
   const form = new FormData();
-  form.append('file', blob, args.fileName ?? 'audio');
+  form.append('file', blob, fileName);
   form.append('model', modelId);
   form.append('response_format', 'verbose_json');
   if (language) form.append('language', language);

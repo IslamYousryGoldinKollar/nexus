@@ -4,7 +4,7 @@ import {
   attachments,
   transcripts,
   interactions as interactionsTable,
-  eq, and, isNull
+  eq, and, isNull, sql
 } from '@nexus/db';
 import { supabaseStorageCredsFromEnv, signSupabaseGetUrl } from '@nexus/services';
 import { transcribe } from '@nexus/services';
@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'No Supabase Storage credentials' }, { status: 500 });
     }
 
-    // Find attachments without transcripts
+    // Find audio/video attachments without transcripts
     const untranscribed = await db
       .select({
         attachmentId: attachments.id,
@@ -60,7 +60,10 @@ export async function GET(req: NextRequest) {
       })
       .from(attachments)
       .leftJoin(transcripts, eq(transcripts.attachmentId, attachments.id))
-      .where(isNull(transcripts.id))
+      .where(and(
+        isNull(transcripts.id),
+        sql`${attachments.mimeType} LIKE 'audio%' OR ${attachments.mimeType} LIKE 'video%'`,
+      ))
       .limit(limit);
 
     if (untranscribed.length === 0) {
