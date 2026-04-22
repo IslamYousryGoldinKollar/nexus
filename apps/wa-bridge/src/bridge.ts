@@ -108,7 +108,19 @@ export async function startBridge(): Promise<void> {
 
   // --- Inbound messages ---
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
+    // Baileys emits three flavors of upsert:
+    //   notify  — live messages arriving right now
+    //   append  — messages that landed while we were disconnected, now
+    //             being replayed (offline queue drain)
+    //   prepend — historical backfill (only fires if syncFullHistory=true,
+    //             which we have off)
+    //
+    // We ingest notify + append. DB dedup via UNIQUE(channel, source_message_id)
+    // makes re-processing safe, and `append` is exactly how we get messages
+    // that arrived during a Fly restart.
+    log.info({ type, count: messages.length }, 'messages.upsert');
+    if (type !== 'notify' && type !== 'append') return;
+
     const payloads: BaileysMessagePayload[] = [];
     for (const m of messages) {
       try {
@@ -121,6 +133,7 @@ export async function startBridge(): Promise<void> {
         );
       }
     }
+    log.info({ raw: messages.length, normalized: payloads.length }, 'messages.normalized');
     if (payloads.length === 0) return;
     const envelope: ForwardEnvelope = {
       source: 'baileys',
