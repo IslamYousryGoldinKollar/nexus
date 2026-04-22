@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb, interactions as interactionsTable, eq } from '@nexus/db';
-import { extractIdentifier } from '@nexus/inngest-fns/src/functions/extract-identifier.js';
-import { inngest } from '@nexus/inngest-fns/src/client.js';
+import { inngest } from '@nexus/inngest-fns';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -44,24 +43,24 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Interaction not found' }, { status: 404 });
     }
 
-    // Extract identifier
-    const identified = extractIdentifier(
-      interaction.channel as 'whatsapp',
-      interaction.rawPayload,
-      interaction.sourceMessageId,
-    );
-
+    const raw = interaction.rawPayload as Record<string, unknown>;
+    const rawKey = (raw?.raw as Record<string, unknown> | undefined)?.key as Record<string, unknown> | undefined;
+    
     const result: Record<string, unknown> = {
       interactionId,
       channel: interaction.channel,
       sourceMessageId: interaction.sourceMessageId,
       contentType: interaction.contentType,
       rawPayloadPreview: {
-        id: (interaction.rawPayload as Record<string, unknown>)?.id,
-        from: (interaction.rawPayload as Record<string, unknown>)?.from,
-        type: (interaction.rawPayload as Record<string, unknown>)?.type,
+        id: raw?.id,
+        from: raw?.from,
+        'raw.key.senderPn': rawKey?.senderPn,
+        'raw.key.remoteJid': rawKey?.remoteJid,
+        'raw.pushName': (raw?.raw as Record<string, unknown> | undefined)?.pushName,
+        type: raw?.type,
       },
-      extractResult: identified,
+      contactId: interaction.contactId,
+      sessionId: interaction.sessionId,
     };
 
     // If emit=true, also fire the Inngest event
