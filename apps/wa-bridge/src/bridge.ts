@@ -159,7 +159,15 @@ async function normalize(
   if (!msg || m.key.remoteJid === 'status@broadcast') return null;
 
   const id = m.key.id ?? '';
-  const from = m.key.remoteJid ?? '';
+  // Prefer the real sender phone (`key.senderPn`) over `remoteJid` when the
+  // latter is a pseudonymous Linked-ID. This makes the downstream identifier
+  // resolver's job trivial and avoids fake-phone contact rows.
+  const remoteJid = m.key.remoteJid ?? '';
+  const senderPn =
+    typeof (m.key as unknown as { senderPn?: string }).senderPn === 'string'
+      ? (m.key as unknown as { senderPn: string }).senderPn
+      : null;
+  const from = remoteJid.endsWith('@lid') && senderPn ? senderPn : remoteJid;
   const fromMe = Boolean(m.key.fromMe);
   const timestamp = Number(m.messageTimestamp ?? Math.floor(Date.now() / 1000));
 

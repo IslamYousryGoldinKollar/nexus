@@ -23,9 +23,55 @@ export function extractIdentifier(
 
   switch (channel) {
     case 'whatsapp': {
-      const from = typeof p.from === 'string' ? p.from : null;
-      const wa = normalizeWaId(from);
-      return wa ? { kind: 'whatsapp_wa_id', value: wa, displayHint: from ?? undefined } : null;
+      // Two WhatsApp shapes land here:
+      //   - Meta Cloud webhook: `from` is a clean digit-only wa_id (e.g. "201234567890")
+      //   - Baileys bridge: `from` is a JID like
+      //       "<digits>@s.whatsapp.net"   — a real phone-bearing address
+      //       "<digits>@lid"              — pseudonymous Linked-ID (not a phone!)
+      //       "<digits>@g.us"             — group address (also not a phone)
+      //     In the @lid case Baileys also exposes `raw.key.senderPn` with the
+      //     sender's real E.164 address when WA chose to reveal it, plus
+      //     `raw.pushName` (human display name).
+      //
+      // Resolution order:
+      //   1. `raw.key.senderPn`         ← best: verified phone
+      //   2. `raw.key.remoteJid` unless @lid/@g.us/@broadcast
+      //   3. `from`                    unless @lid/@g.us/@broadcast
+      //   4. Fallback: use the raw `@lid` digits as a stable pseudonymous
+      //      identifier so we still get a contact + session + transcription.
+      const raw = (p.raw as Record<string, unknown> | undefined) ?? null;
+      const key = (raw?.key as Record<string, unknown> | undefined) ?? null;
+      const senderPn = typeof key?.senderPn === 'string' ? key.senderPn : null;
+      const remoteJid = typeof key?.remoteJid === 'string' ? key.remoteJid : null;
+      const pushName = typeof raw?.pushName === 'string' ? raw.pushName : null;
+      const fromField = typeof p.from === 'string' ? p.from : null;
+
+      // Strip `@<suffix>` and `:<device>` (e.g. "201110202550:25@s.whatsapp.net").
+      const stripJid = (s: string | null): string | null => {
+        if (!s) return null;
+        const at = s.split('@')[0] ?? '';
+        return (at.split(':')[0] ?? '') || null;
+      };
+      const isPhoneAddr = (s: string | null): s is string =>
+        !!s && !s.includes('@lid') && !s.includes('@g.us') && !s.includes('@broadcast');
+
+      for (const cand of [senderPn, remoteJid, fromField].filter(isPhoneAddr)) {
+        const wa = normalizeWaId(stripJid(cand));
+        if (wa) return { kind: 'whatsapp_wa_id', value: wa, displayHint: pushName ?? cand };
+      }
+
+      // Pseudonymous fallback: still identify, but signal non-phone with a `lid:` prefix
+      // that will never collide with a real E.164 number.
+      const lidSrc = remoteJid ?? fromField;
+      const lidDigits = stripJid(lidSrc);
+      if (lidDigits && lidDigits.length >= 7) {
+        return {
+          kind: 'whatsapp_wa_id',
+          value: `lid:${lidDigits}`,
+          displayHint: pushName ?? lidSrc ?? undefined,
+        };
+      }
+      return null;
     }
 
     case 'telegram': {

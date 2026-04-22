@@ -8,7 +8,13 @@ import {
   isOverMonthlyBudget,
   recordCostEvent,
 } from '@nexus/db';
-import { r2CredsFromEnv, signR2GetUrl, transcribe } from '@nexus/services';
+import {
+  r2CredsFromEnv,
+  signR2GetUrl,
+  signSupabaseGetUrl,
+  supabaseStorageCredsFromEnv,
+  transcribe,
+} from '@nexus/services';
 import { inngest } from '../client.js';
 
 /**
@@ -76,12 +82,20 @@ export const transcribeAttachment = inngest.createFunction(
       return { status: 'budget-exceeded' as const, spent: budget.spent };
     }
 
-    // ---- 4. Sign R2 URL + transcribe -------------------------------------
-    const creds = r2CredsFromEnv();
-    if (!creds) throw new Error('R2 credentials missing in env');
+    // ---- 4. Sign storage URL + transcribe --------------------------------
+    // Support both Cloudflare R2 (legacy) and Supabase Storage (Baileys bridge).
+    // Attachment `r2Key` is a path under the active bucket regardless of backend.
+    const r2Creds = r2CredsFromEnv();
+    const supCreds = r2Creds ? null : supabaseStorageCredsFromEnv();
+    if (!r2Creds && !supCreds) {
+      throw new Error(
+        'No storage credentials in env: need R2_* (R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY) or SUPABASE_* (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / SUPABASE_STORAGE_BUCKET)',
+      );
+    }
 
     const audioUrl = await step.run('sign-url', async () => {
-      return signR2GetUrl(creds, attachment.r2Key, 15 * 60);
+      if (r2Creds) return signR2GetUrl(r2Creds, attachment.r2Key, 15 * 60);
+      return signSupabaseGetUrl(supCreds!, attachment.r2Key, 15 * 60);
     });
 
     const isCall = interaction?.contentType === 'call';
