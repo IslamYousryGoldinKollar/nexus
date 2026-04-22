@@ -16,7 +16,7 @@ import {
   type BaileysMessagePayload,
   type ForwardEnvelope,
 } from './forward.js';
-import { uploadMedia } from './storage.js';
+import { uploadMedia, wipeAuthFiles } from './storage.js';
 
 /**
  * Boot a Baileys socket and plumb it into the Nexus ingest endpoint.
@@ -90,7 +90,15 @@ export async function startBridge(): Promise<void> {
       const loggedOut = statusCode === DisconnectReason.loggedOut;
       log.warn({ statusCode, loggedOut }, 'connection.close');
       if (loggedOut) {
-        log.error('session invalidated — operator must re-pair');
+        log.error('session invalidated — wiping remote auth + restarting clean');
+        try {
+          const n = await wipeAuthFiles();
+          log.info({ deleted: n }, 'auth.wiped');
+        } catch (err) {
+          log.warn({ err: (err as Error).message }, 'auth.wipe.failed');
+        }
+        // Let Fly restart the machine; on next boot hydrate will be empty
+        // and a fresh QR/pair-code cycle begins.
         process.exit(2);
       }
       // Transient — let the process manager restart us (or reconnect inline)

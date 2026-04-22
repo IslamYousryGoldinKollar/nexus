@@ -129,3 +129,19 @@ export async function listAuthFiles(): Promise<string[]> {
   if (error) throw new Error(`auth list failed: ${error.message}`);
   return (data ?? []).map((f) => f.name);
 }
+
+/**
+ * Nuke all remote auth files. Called on WA "logged out" so the next
+ * boot pairs cleanly instead of re-hydrating broken creds and
+ * restart-looping until Fly stops the machine.
+ */
+export async function wipeAuthFiles(): Promise<number> {
+  const names = await listAuthFiles().catch(() => [] as string[]);
+  if (names.length === 0) return 0;
+  const paths = names.map((n) => `${AUTH_PREFIX}/${n}`);
+  const { error } = await client()
+    .storage.from(env.storageBucket)
+    .remove(paths);
+  if (error) throw new Error(`auth wipe failed: ${error.message}`);
+  return paths.length;
+}
