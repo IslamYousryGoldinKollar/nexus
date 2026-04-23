@@ -9,16 +9,16 @@ import {
   sessions as sessionsTable,
   sql,
 } from '@nexus/db';
-import { reasonOverSession, SONNET_4_5 } from '@nexus/services';
+import { reasonOverSession, GPT_4O_MINI } from '@nexus/services';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 /**
- * Direct reasoning endpoint — bypasses Inngest, runs Claude Sonnet 4.5 
+ * Direct reasoning endpoint — bypasses Inngest, runs GPT-4o-mini (OpenAI)
  * over a session immediately.
- * 
+ *
  * GET /api/admin/direct-reasoning?sessionId=<uuid>
  * GET /api/admin/direct-reasoning?all=true
  */
@@ -33,13 +33,13 @@ export async function GET(req: NextRequest) {
   const sessionId = req.nextUrl.searchParams.get('sessionId');
   const all = req.nextUrl.searchParams.get('all') === 'true';
 
-  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
-    return NextResponse.json({ error: 'ANTHROPIC_API_KEY not set' }, { status: 500 });
+    return NextResponse.json({ error: 'OPENAI_API_KEY not set' }, { status: 500 });
   }
 
   const db = getDb();
-  const model = process.env.ANTHROPIC_MODEL?.trim() || SONNET_4_5;
+  const model = process.env.OPENAI_MODEL?.trim() || GPT_4O_MINI;
 
   try {
     let targetSessionIds: string[] = [];
@@ -111,11 +111,12 @@ export async function GET(req: NextRequest) {
           })),
         };
 
-        // Run Claude reasoning
-        const result = await reasonOverSession({ 
-          apiKey, 
-          model, 
-          context: reasonInput 
+        // Run OpenAI reasoning
+        const result = await reasonOverSession({
+          apiKey,
+          model,
+          context: reasonInput,
+          provider: 'openai',
         });
 
         // Persist reasoning run
@@ -153,7 +154,7 @@ export async function GET(req: NextRequest) {
 
         // Record cost event
         await recordCostEvent(db, {
-          service: 'anthropic',
+          service: 'openai',
           operation: 'reason.session',
           costUsd: result.costUsd.toFixed(6),
           tokensIn: result.tokensIn,

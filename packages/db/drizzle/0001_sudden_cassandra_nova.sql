@@ -12,3 +12,5 @@ CREATE TABLE IF NOT EXISTS "magic_link_tokens" (
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "magic_link_tokens_email_idx" ON "magic_link_tokens" USING btree ("email");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "magic_link_tokens_expires_idx" ON "magic_link_tokens" USING btree ("expires_at");
+--> statement-breakpoint
+ALTER TYPE "cost_service" ADD VALUE IF NOT EXISTS 'openai' BEFORE 'openai_whisper';

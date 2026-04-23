@@ -108,6 +108,7 @@ export const notificationKindEnum = pgEnum('notification_kind', [
 // --- Costs ---
 export const costServiceEnum = pgEnum('cost_service', [
   'anthropic',
+  'openai',
   'openai_whisper',
   'assemblyai',
   'r2',

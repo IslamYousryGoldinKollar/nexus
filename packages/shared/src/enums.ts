@@ -67,6 +67,7 @@ export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
 export const COST_SERVICES = [
   'anthropic',
+  'openai',
   'openai_whisper',
   'assemblyai',
   'r2',

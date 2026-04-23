@@ -1,9 +1,13 @@
 import type Anthropic from '@anthropic-ai/sdk';
+import type OpenAI from 'openai';
 import { z } from 'zod';
 import { computeClaudeCostUsd, getAnthropicClient, SONNET_4_5 } from './anthropic.js';
+import { computeOpenAICostUsd, getOpenAIClient, GPT_4O_MINI } from './openai.js';
 
 /**
- * Phase 4 — Reason over a session context with Claude Sonnet 4.5.
+ * Phase 4 — Reason over a session context with Claude Sonnet 4.5 or GPT-4o-mini (OpenAI).
+ *
+ * Default provider is OpenAI for cost savings (~20x cheaper).
  *
  * The system prompt is split into two blocks:
  *   1. Static Nexus persona + rules (ephemeral cached — same for every call)
@@ -138,7 +142,7 @@ function buildSessionBody(ctx: ReasonContext): string {
 
 export interface ReasonCallResult {
   output: ReasonOutput;
-  rawResponse: Anthropic.Messages.Message;
+  rawResponse: Anthropic.Messages.Message | OpenAI.Chat.Completions.ChatCompletion;
   costUsd: number;
   tokensIn: number;
   tokensOut: number;
@@ -150,6 +154,22 @@ export async function reasonOverSession(args: {
   model?: string;
   context: ReasonContext;
   maxTokens?: number;
+  provider?: 'anthropic' | 'openai';
+}): Promise<ReasonCallResult> {
+  const { apiKey, model = GPT_4O_MINI, context, maxTokens = 2048, provider = 'openai' } = args;
+
+  if (provider === 'openai') {
+    return reasonOverSessionOpenAI({ apiKey, model: model || GPT_4O_MINI, context, maxTokens });
+  }
+
+  return reasonOverSessionAnthropic({ apiKey, model, context, maxTokens });
+}
+
+async function reasonOverSessionAnthropic(args: {
+  apiKey: string;
+  model: string;
+  context: ReasonContext;
+  maxTokens: number;
 }): Promise<ReasonCallResult> {
   const { apiKey, model = SONNET_4_5, context, maxTokens = 2048 } = args;
 
@@ -215,6 +235,70 @@ export async function reasonOverSession(args: {
     costUsd,
     tokensIn: usage.input_tokens,
     tokensOut: usage.output_tokens,
+    latencyMs,
+  };
+}
+
+async function reasonOverSessionOpenAI(args: {
+  apiKey: string;
+  model: string;
+  context: ReasonContext;
+  maxTokens: number;
+}): Promise<ReasonCallResult> {
+  const { apiKey, model = GPT_4O_MINI, context, maxTokens = 2048 } = args;
+
+  const client = getOpenAIClient(apiKey);
+  const userBody = buildSessionBody(context);
+
+  const start = Date.now();
+  const response = await client.chat.completions.create({
+    model,
+    max_tokens: maxTokens,
+    messages: [
+      {
+        role: 'system',
+        content: `${NEXUS_PERSONA}\n\n${OUTPUT_CONTRACT}`,
+      },
+      {
+        role: 'user',
+        content: userBody,
+      },
+    ],
+    response_format: { type: 'json_object' },
+  });
+  const latencyMs = Date.now() - start;
+
+  const raw = response.choices[0]?.message?.content;
+  if (!raw) {
+    throw new Error('OpenAI response had no content');
+  }
+
+  let parsed: ReasonOutput;
+  try {
+    const jsonish = JSON.parse(raw);
+    parsed = reasonOutputSchema.parse(jsonish);
+  } catch (err) {
+    throw new Error(
+      `reason output invalid: ${(err as Error).message}\nraw: ${raw.slice(0, 500)}`,
+    );
+  }
+
+  const usage = response.usage;
+  if (!usage) {
+    throw new Error('OpenAI response missing usage data');
+  }
+
+  const costUsd = computeOpenAICostUsd({
+    promptTokens: usage.prompt_tokens,
+    completionTokens: usage.completion_tokens,
+  });
+
+  return {
+    output: parsed,
+    rawResponse: response,
+    costUsd,
+    tokensIn: usage.prompt_tokens,
+    tokensOut: usage.completion_tokens,
     latencyMs,
   };
 }

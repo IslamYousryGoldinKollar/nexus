@@ -9,11 +9,11 @@ import {
   sessions as sessionsTable,
   sql,
 } from '@nexus/db';
-import { reasonOverSession, SONNET_4_5 } from '@nexus/services';
+import { reasonOverSession, GPT_4O_MINI } from '@nexus/services';
 import { inngest } from '../client.js';
 
 /**
- * Phase 4 — Reason over a session with Claude Sonnet 4.5.
+ * Phase 4 — Reason over a session with GPT-4o-mini (OpenAI).
  *
  * Trigger: `nexus/session.reasoning.requested`
  * Preconditions: the session is in state `reasoning` (Phase 2 transitions it).
@@ -26,7 +26,7 @@ import { inngest } from '../client.js';
 export const reasonSession = inngest.createFunction(
   {
     id: 'session-reason',
-    name: 'Reason over session with Claude (Phase 4)',
+    name: 'Reason over session with OpenAI (Phase 4)',
     retries: 1,
     concurrency: { limit: 3 },
   },
@@ -56,11 +56,11 @@ export const reasonSession = inngest.createFunction(
     }
 
     // ---- 2. Budget circuit-breaker --------------------------------------
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    const budget = Number(process.env.ANTHROPIC_MONTHLY_BUDGET_USD ?? '200') || 200;
+    const apiKey = process.env.OPENAI_API_KEY;
+    const budget = Number(process.env.OPENAI_MONTHLY_BUDGET_USD ?? '200') || 200;
     const over = await step.run('check-budget', async () => {
       const db = getDb();
-      return isOverMonthlyBudget(db, 'anthropic', budget);
+      return isOverMonthlyBudget(db, 'openai', budget);
     });
     if (over.over || !apiKey) {
       logger.error('reason.budget_exceeded_or_no_key', {
@@ -79,8 +79,8 @@ export const reasonSession = inngest.createFunction(
       return { status: 'budget-or-key' as const };
     }
 
-    // ---- 3. Call Claude --------------------------------------------------
-    const model = process.env.ANTHROPIC_MODEL || SONNET_4_5;
+    // ---- 3. Call OpenAI --------------------------------------------------
+    const model = process.env.OPENAI_MODEL?.trim() || GPT_4O_MINI;
     // step.run return values round-trip through JSON — timestamp fields
     // arrive as ISO strings despite Drizzle's `Date` type. Coerce defensively.
     const toIso = (v: Date | string): string =>
@@ -112,8 +112,8 @@ export const reasonSession = inngest.createFunction(
       })),
     };
 
-    const result = await step.run('call-claude', async () => {
-      return reasonOverSession({ apiKey, model, context: reasonInput });
+    const result = await step.run('call-openai', async () => {
+      return reasonOverSession({ apiKey, model, context: reasonInput, provider: 'openai' });
     });
 
     // ---- 4. Persist reasoning_run + proposed_tasks + cost ---------------
@@ -151,7 +151,7 @@ export const reasonSession = inngest.createFunction(
       );
 
       await recordCostEvent(db, {
-        service: 'anthropic',
+        service: 'openai',
         operation: 'reason.session',
         costUsd: result.costUsd.toFixed(6),
         tokensIn: result.tokensIn,
