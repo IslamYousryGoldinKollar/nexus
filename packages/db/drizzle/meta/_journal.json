@@ -8,6 +8,13 @@
       "when": 1776442847050,
       "tag": "0000_smiling_joshua_kane",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1776902759208,
+      "tag": "0001_sudden_cassandra_nova",
+      "breakpoints": true
     }
   ]
 }

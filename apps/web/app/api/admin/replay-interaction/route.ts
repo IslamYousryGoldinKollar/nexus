@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { type NextRequest, NextResponse } from 'next/server';
 import { getDb, interactions as interactionsTable, eq } from '@nexus/db';
 import { inngest } from '@nexus/inngest-fns';
 

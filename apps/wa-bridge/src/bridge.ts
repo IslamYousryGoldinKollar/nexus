@@ -5,7 +5,7 @@ import makeWASocket, {
   type WAMessage,
   type WASocket,
 } from '@whiskeysockets/baileys';
-import { Boom } from '@hapi/boom';
+import type { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
 import { useRemoteAuthState } from './auth-store.js';
 import { env } from './env.js';
