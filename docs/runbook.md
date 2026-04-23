@@ -122,6 +122,37 @@ Symptoms: approved tasks stay `approved` (not `synced`), `approved_tasks.syncErr
 4. Permanent: re-trigger by emitting nexus/injaz.sync.requested with proposedTaskId from Inngest UI
 ```
 
+### 8. Budget circuit breaker triggered
+
+Symptoms: operations failing with "budget exceeded" status, cost notifications at 80% or 100%.
+
+```
+1. Check /costs page for current spend vs budget per service
+2. If 80% warning (⚠️): legitimate spike → raise budget env var (e.g., ANTHROPIC_MONTHLY_BUDGET_USD)
+3. If 100% hard stop (🛑): operations blocked → immediate action required:
+   a. If loop/bug: flip budget to $1 to stop bleeding, then debug
+   b. If legitimate need: raise budget env var to restore operations
+4. Budget override for emergencies: temporarily set BUDGET_OVERRIDE=true to bypass checks (use with extreme caution)
+5. After fix, restore budget. Cost events are auditable via:
+   select date_trunc('hour', occurred_at), service, sum(cost_usd)
+   from cost_events
+   where occurred_at > now() - interval '24 hours'
+   group by 1, 2 order by 1 desc, 3 desc;
+```
+
+### 9. Telegram fallback not sending
+
+Symptoms: FCM push not received, Telegram fallback not arriving after delay.
+
+```
+1. Check notification record in DB: notifications table for fallback_due_at timestamp
+2. Verify TELEGRAM_BOT_TOKEN and TELEGRAM_ADMIN_IDS are set in Vercel env
+3. Check Inngest dashboard for telegram-fallback function runs
+4. If fallback_due_at is in future: wait for delay (30m for proposals, 10m for identifiers)
+5. If delivered_channels includes 'telegram': fallback was sent, check Telegram delivery
+6. Test bot directly: curl https://api.telegram.org/bot$TOKEN/getMe
+```
+
 ## Observability surfaces
 
 | Surface | What lives there |

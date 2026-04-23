@@ -1,6 +1,7 @@
 import { type NextRequest } from 'next/server';
 import { safeStringEqual } from '@nexus/shared';
 import { handleTelegramCallback } from '@/lib/channels/telegram/approval';
+import { handleTelegramCommand } from '@/lib/channels/telegram/commands';
 import { ingestTelegramUpdate } from '@/lib/channels/telegram/ingest';
 import { telegramUpdate } from '@/lib/channels/telegram/schema';
 import { serverEnv } from '@/lib/env';
@@ -71,6 +72,25 @@ export async function POST(req: NextRequest) {
         err: (err as Error).message,
       });
       return ack({ callback: 'handler_failed' });
+    }
+  }
+
+  // Phase 9 — process text commands before the ingest path.
+  if (parsed.data.message?.text?.startsWith('/')) {
+    try {
+      const msg = parsed.data.message as {
+        message_id: number;
+        chat: { id: number };
+        from: { id: number; username?: string };
+        text: string;
+      };
+      await handleTelegramCommand(msg);
+      return ack({ command: 'handled' });
+    } catch (err) {
+      log.error('telegram.command.handler_failed', {
+        err: (err as Error).message,
+      });
+      return ack({ command: 'handler_failed' });
     }
   }
 

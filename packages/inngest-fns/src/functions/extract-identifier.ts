@@ -42,6 +42,7 @@ export function extractIdentifier(
       const raw = (p.raw as Record<string, unknown> | undefined) ?? null;
       const key = (raw?.key as Record<string, unknown> | undefined) ?? null;
       const senderPn = typeof key?.senderPn === 'string' ? key.senderPn : null;
+      const participantPn = typeof key?.participantPn === 'string' ? key.participantPn : null;
       const remoteJid = typeof key?.remoteJid === 'string' ? key.remoteJid : null;
       const pushName = typeof raw?.pushName === 'string' ? raw.pushName : null;
       const fromField = typeof p.from === 'string' ? p.from : null;
@@ -55,7 +56,7 @@ export function extractIdentifier(
       const isPhoneAddr = (s: string | null): s is string =>
         !!s && !s.includes('@lid') && !s.includes('@g.us') && !s.includes('@broadcast');
 
-      for (const cand of [senderPn, remoteJid, fromField].filter(isPhoneAddr)) {
+      for (const cand of [senderPn, participantPn, remoteJid, fromField].filter(isPhoneAddr)) {
         const wa = normalizeWaId(stripJid(cand));
         if (wa) return { kind: 'whatsapp_wa_id', value: wa, displayHint: pushName ?? cand };
       }

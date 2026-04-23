@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { serverEnv } from '@/lib/env';
-import { getDb } from '@nexus/db';
+import { getDb, costEvents as costEventsTable, sql, sessions as sessionsTable } from '@nexus/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,6 +34,27 @@ export async function GET() {
       set: !!process.env.DATABASE_URL,
       hasPassword: process.env.DATABASE_URL?.includes(':') || false,
     },
+    inngest: {
+      eventKey: !!process.env.INNGEST_EVENT_KEY,
+      signingKey: !!process.env.INNGEST_SIGNING_KEY,
+    },
+    gmail: {
+      clientId: !!process.env.GMAIL_OAUTH_CLIENT_ID,
+      clientSecret: !!process.env.GMAIL_OAUTH_CLIENT_SECRET,
+    },
+    telegram: {
+      botToken: !!process.env.TELEGRAM_BOT_TOKEN,
+      adminIds: !!process.env.TELEGRAM_ADMIN_IDS,
+      webhookSecret: !!process.env.TELEGRAM_WEBHOOK_SECRET,
+    },
+    anthropic: {
+      apiKey: !!process.env.ANTHROPIC_API_KEY,
+      budget: !!process.env.ANTHROPIC_MONTHLY_BUDGET_USD,
+    },
+    openai: {
+      apiKey: !!process.env.OPENAI_API_KEY,
+      budget: !!process.env.OPENAI_MONTHLY_BUDGET_USD,
+    },
   };
 
   // Test database connection
@@ -46,11 +67,62 @@ export async function GET() {
     dbStatus = `error: ${(err as Error).message}`;
   }
 
+  // Get metrics
+  let metrics = {};
+  try {
+    const db = getDb();
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    // Session metrics
+    const [sessionMetrics] = await db
+      .select({
+        total: sql<number>`count(*)`,
+        open: sql<number>`count(*) filter (where state = 'open')`,
+        aggregating: sql<number>`count(*) filter (where state = 'aggregating')`,
+        reasoning: sql<number>`count(*) filter (where state = 'reasoning')`,
+        awaitingApproval: sql<number>`count(*) filter (where state = 'awaiting_approval')`,
+        approved: sql<number>`count(*) filter (where state = 'approved')`,
+        error: sql<number>`count(*) filter (where state = 'error')`,
+      })
+      .from(sessionsTable);
+
+    // Cost metrics (this month)
+    const [costMetrics] = await db
+      .select({
+        total: sql<number>`coalesce(sum(cost_usd), 0)`,
+        anthropic: sql<number>`coalesce(sum(cost_usd) filter (where service = 'anthropic'), 0)`,
+        openai_whisper: sql<number>`coalesce(sum(cost_usd) filter (where service = 'openai_whisper'), 0)`,
+        assemblyai: sql<number>`coalesce(sum(cost_usd) filter (where service = 'assemblyai'), 0)`,
+        resend: sql<number>`coalesce(sum(cost_usd) filter (where service = 'resend'), 0)`,
+      })
+      .from(costEventsTable)
+      .where(sql`${costEventsTable.occurredAt} >= ${startOfMonth}`);
+
+    // Cost metrics (today)
+    const [costToday] = await db
+      .select({ total: sql<number>`coalesce(sum(cost_usd), 0)` })
+      .from(costEventsTable)
+      .where(sql`${costEventsTable.occurredAt} >= ${startOfDay}`);
+
+    metrics = {
+      sessions: sessionMetrics,
+      costs: {
+        month: costMetrics,
+        today: costToday,
+      },
+    };
+  } catch (err) {
+    metrics = { error: (err as Error).message };
+  }
+
   return NextResponse.json({
     ok: true,
     timestamp: new Date().toISOString(),
     nodeEnv: process.env.NODE_ENV,
     checks,
     dbStatus,
+    metrics,
   }, { status: 200 });
 }

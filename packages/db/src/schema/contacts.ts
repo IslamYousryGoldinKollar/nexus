@@ -20,6 +20,8 @@ export const contacts = pgTable('contacts', {
   displayName: text('display_name').notNull(),
   accountId: uuid('account_id').references(() => accounts.id, { onDelete: 'set null' }),
   notes: text('notes'),
+  allowTranscription: boolean('allow_transcription').notNull().default(true),
+  allowAction: boolean('allow_action').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true })
     .notNull()

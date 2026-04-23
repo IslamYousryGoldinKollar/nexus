@@ -9,6 +9,9 @@
  *   - transcribe: skip + log (no business value lost; user can retry next month)
  *   - reason: mark session error + alert admin via Telegram
  *   - injaz: never breaks; we never want to skip an approved task
+ *
+ * Budget notifications (80% warning, 100% exceeded) are handled by
+ * the notification router Inngest function (Phase 9).
  */
 
 export type BudgetService = 'anthropic' | 'openai_whisper' | 'assemblyai' | 'resend';
@@ -63,4 +66,9 @@ export function evaluateBudget(
     remainingUsd,
     status,
   };
+}
+
+/** Check if budget override is enabled (emergency use only). */
+export function isBudgetOverrideEnabled(): boolean {
+  return process.env.BUDGET_OVERRIDE === 'true';
 }

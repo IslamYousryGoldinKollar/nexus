@@ -1,5 +1,5 @@
 import { Construction } from 'lucide-react';
-import { serverEnv } from '@/lib/env';
+import { env } from '@/lib/env';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,6 +10,14 @@ export const dynamic = 'force-dynamic';
  * Google Drive root pick) ship in Phase 5+.
  */
 export default function SettingsPage() {
+  let serverEnv;
+  try {
+    serverEnv = env();
+  } catch (err) {
+    console.error('Failed to parse server env:', err);
+    serverEnv = {} as ReturnType<typeof env>;
+  }
+
   const checks = [
     { key: 'WhatsApp', ok: !!serverEnv.WHATSAPP_ACCESS_TOKEN, hint: 'WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN' },
     { key: 'Telegram', ok: !!serverEnv.TELEGRAM_BOT_TOKEN, hint: 'TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET' },

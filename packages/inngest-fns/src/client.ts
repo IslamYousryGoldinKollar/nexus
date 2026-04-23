@@ -1,12 +1,15 @@
 import { EventSchemas, Inngest } from 'inngest';
 import type {
+  GmailNotificationReceivedEvent,
   IdentifierSeenEvent,
   InjazSyncRequestedEvent,
   InteractionIngestedEvent,
+  NotificationRequestedEvent,
   ProposalCreatedEvent,
   SessionCooldownHeartbeatEvent,
   SessionReasoningRequestedEvent,
   SystemErrorEvent,
+  TelegramFallbackRequestedEvent,
   TranscriptionRequestedEvent,
 } from '@nexus/shared';
 
@@ -24,6 +27,9 @@ type Events = {
   'nexus/transcription.requested': TranscriptionRequestedEvent;
   'nexus/injaz.sync.requested': InjazSyncRequestedEvent;
   'nexus/system.error': SystemErrorEvent;
+  'nexus/gmail.notification.received': GmailNotificationReceivedEvent;
+  'nexus/notification.requested': NotificationRequestedEvent;
+  'nexus/telegram.fallback.requested': TelegramFallbackRequestedEvent;
 };
 
 export const inngest = new Inngest({

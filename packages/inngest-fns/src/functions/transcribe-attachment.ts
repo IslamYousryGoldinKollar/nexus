@@ -1,4 +1,5 @@
 import {
+  contacts,
   eq,
   findTranscriptByAttachment,
   getAttachmentById,
@@ -66,6 +67,26 @@ export const transcribeAttachment = inngest.createFunction(
         .limit(1);
       return row ?? null;
     });
+
+    // ---- 3. Privacy check: contact transcription permission ----------------
+    if (interaction?.contactId) {
+      const contact = await step.run('check-contact-permission', async () => {
+        const db = getDb();
+        const [row] = await db
+          .select()
+          .from(contacts)
+          .where(eq(contacts.id, interaction.contactId!))
+          .limit(1);
+        return row ?? null;
+      });
+      if (contact && !contact.allowTranscription) {
+        logger.info('transcribe.skip.contact_blocked', {
+          attachmentId,
+          contactId: contact.id,
+        });
+        return { status: 'contact-blocked' as const, contactId: contact.id };
+      }
+    }
 
     // ---- 3. Budget circuit-breaker ---------------------------------------
     const whisperBudget = Number(process.env.WHISPER_MONTHLY_BUDGET_USD ?? '100') || 100;

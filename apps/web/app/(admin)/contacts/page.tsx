@@ -2,6 +2,7 @@ import { Contact } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatRelative } from '@/components/ui/format';
 import { listContacts } from '@/lib/queries/contacts-list';
+import ContactPrivacyControls from './contact-privacy-controls';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +31,8 @@ export default async function ContactsPage() {
               <tr>
                 <th className="px-4 py-2 text-left font-medium">Name</th>
                 <th className="px-4 py-2 text-left font-medium">Identifiers</th>
+                <th className="px-4 py-2 text-center font-medium">Transcribe</th>
+                <th className="px-4 py-2 text-center font-medium">Action</th>
                 <th className="px-4 py-2 text-right font-medium">Sessions</th>
                 <th className="px-4 py-2 text-right font-medium">Updated</th>
               </tr>
@@ -55,6 +58,20 @@ export default async function ContactsPage() {
                         </span>
                       )}
                     </div>
+                  </td>
+                  <td className="px-4 py-2 text-center">
+                    <ContactPrivacyControls
+                      contactId={contact.id}
+                      field="allowTranscription"
+                      defaultValue={contact.allowTranscription ?? true}
+                    />
+                  </td>
+                  <td className="px-4 py-2 text-center">
+                    <ContactPrivacyControls
+                      contactId={contact.id}
+                      field="allowAction"
+                      defaultValue={contact.allowAction ?? true}
+                    />
                   </td>
                   <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
                     {sessionCount}

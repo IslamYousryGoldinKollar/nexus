@@ -31,6 +31,8 @@ export const sessions = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     contactId: uuid('contact_id').references(() => contacts.id, { onDelete: 'cascade' }),
     accountId: uuid('account_id').references(() => accounts.id, { onDelete: 'set null' }),
+    channel: channelEnum('channel'),
+    threadId: text('thread_id'),
     state: sessionStateEnum('state').notNull().default('open'),
     openedAt: timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
     lastActivityAt: timestamp('last_activity_at', { withTimezone: true })
@@ -47,6 +49,7 @@ export const sessions = pgTable(
   (t) => ({
     contactStateIdx: index('sessions_contact_state_idx').on(t.contactId, t.state),
     lastActivityIdx: index('sessions_last_activity_idx').on(t.lastActivityAt),
+    threadIdIdx: index('sessions_thread_id_idx').on(t.threadId),
   }),
 );
 

@@ -97,3 +97,37 @@ export const systemErrorEvent = z.object({
   }),
 });
 export type SystemErrorEvent = z.infer<typeof systemErrorEvent>;
+
+// Fired when Gmail Pub/Sub sends a notification about new email.
+export const gmailNotificationReceivedEvent = z.object({
+  name: z.literal('nexus/gmail.notification.received'),
+  data: z.object({
+    emailAddress: z.string().email(),
+    historyId: z.string(),
+    messageId: z.string(),
+  }),
+});
+export type GmailNotificationReceivedEvent = z.infer<typeof gmailNotificationReceivedEvent>;
+
+// Fired when a notification should be sent (proposal, identifier, error, etc.)
+export const notificationRequestedEvent = z.object({
+  name: z.literal('nexus/notification.requested'),
+  data: z.object({
+    userId: z.string().uuid(),
+    kind: z.enum(['proposal', 'pending_identifier', 'session_error', 'cost_warn', 'cost_exceeded', 'injaz_sync_fail', 'digest']),
+    title: z.string(),
+    body: z.string(),
+    payload: z.record(z.unknown()).optional(),
+    fallbackDelayMin: z.number().optional(), // Delay before Telegram fallback (default per kind)
+  }),
+});
+export type NotificationRequestedEvent = z.infer<typeof notificationRequestedEvent>;
+
+// Fired when Telegram fallback should be sent (after delay if still unread)
+export const telegramFallbackRequestedEvent = z.object({
+  name: z.literal('nexus/telegram.fallback.requested'),
+  data: z.object({
+    notificationId: z.string().uuid(),
+  }),
+});
+export type TelegramFallbackRequestedEvent = z.infer<typeof telegramFallbackRequestedEvent>;

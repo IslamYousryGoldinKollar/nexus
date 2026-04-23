@@ -1,4 +1,5 @@
 import {
+  contacts,
   eq,
   getDb,
   insertProposedTasks,
@@ -55,12 +56,39 @@ export const reasonSession = inngest.createFunction(
       return { status: 'empty' as const };
     }
 
+    // ---- 2. Privacy check: contact action permission --------------------
+    if (ctx.contact) {
+      const contact = await step.run('check-contact-permission', async () => {
+        const db = getDb();
+        const [row] = await db
+          .select()
+          .from(contacts)
+          .where(eq(contacts.id, ctx.contact!.id))
+          .limit(1);
+        return row ?? null;
+      });
+      if (contact && !contact.allowAction) {
+        logger.info('reason.skip.contact_blocked', {
+          sessionId,
+          contactId: contact.id,
+        });
+        await step.run('close-blocked', async () => {
+          const db = getDb();
+          await db
+            .update(sessionsTable)
+            .set({ state: 'closed', closedAt: new Date(), updatedAt: sql`now()` })
+            .where(eq(sessionsTable.id, sessionId));
+        });
+        return { status: 'contact-blocked' as const, contactId: contact.id };
+      }
+    }
+
     // ---- 2. Budget circuit-breaker --------------------------------------
     const apiKey = process.env.OPENAI_API_KEY;
     const budget = Number(process.env.OPENAI_MONTHLY_BUDGET_USD ?? '200') || 200;
     const over = await step.run('check-budget', async () => {
       const db = getDb();
-      return isOverMonthlyBudget(db, 'openai', budget);
+      return isOverMonthlyBudget(db, 'anthropic', budget);
     });
     if (over.over || !apiKey) {
       logger.error('reason.budget_exceeded_or_no_key', {

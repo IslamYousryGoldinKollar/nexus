@@ -5,6 +5,7 @@ import {
 } from '@/lib/channels/gmail/schema';
 import { PubsubJwtError, verifyPubsubOidcToken } from '@/lib/channels/gmail/verify-oidc';
 import { serverEnv } from '@/lib/env';
+import { inngest } from '@/lib/inngest';
 import { log } from '@/lib/logger';
 import { parseJsonFromBytes, readRawBody } from '@/lib/raw-body';
 import { ack, signatureFailed } from '@/lib/webhook-response';
@@ -15,14 +16,10 @@ export const dynamic = 'force-dynamic';
 /**
  * Gmail → Pub/Sub push target.
  *
- * Phase 1 scope:
+ * Phase 1.5 scope:
  *   - Verify the Google-signed OIDC JWT on every request.
  *   - Decode the Pub/Sub envelope.
- *   - Log the `(emailAddress, historyId)` we were notified about.
- *
- * Gmail history-polling + message persistence is intentionally deferred
- * until the OAuth2 connect-Gmail flow ships (Phase 1.5 / early Phase 2).
- * Until then we ACK every push so Google stops retrying.
+ *   - Emit Inngest event to fetch email content and create interactions.
  */
 export async function POST(req: NextRequest) {
   const authz = req.headers.get('authorization') ?? '';
@@ -94,7 +91,15 @@ export async function POST(req: NextRequest) {
     messageId: parsed.data.message.messageId,
   });
 
-  // Phase 1.5 TODO: enqueue an Inngest event that pulls history since
-  // `historyId` via the Gmail API and persists new messages as interactions.
+  // Emit Inngest event to process Gmail notification
+  await inngest.send({
+    name: 'nexus/gmail.notification.received',
+    data: {
+      emailAddress: notif.data.emailAddress,
+      historyId: notif.data.historyId,
+      messageId: parsed.data.message.messageId,
+    },
+  });
+
   return ack({ notified: notif.data.emailAddress });
 }
