@@ -35,6 +35,7 @@ export const resolveAndAttach = inngest.createFunction(
     // Limit concurrent resolution per contact so we don't race ourselves
     // on the session-extend path. `null` bucket + 8 slots is plenty.
     concurrency: { limit: 5 },
+    retries: 3,
   },
   { event: 'nexus/interaction.ingested' },
   async ({ event, step, logger }) => {
@@ -53,7 +54,10 @@ export const resolveAndAttach = inngest.createFunction(
         .from(interactionsTable)
         .where(eq(interactionsTable.id, interactionId))
         .limit(1);
-      if (!row) throw new Error(`interaction not found: ${interactionId}`);
+      if (!row) {
+        logger.error('resolve.interaction_not_found', { interactionId });
+        throw new Error(`interaction not found: ${interactionId}`);
+      }
       return row;
     });
 
@@ -89,6 +93,10 @@ export const resolveAndAttach = inngest.createFunction(
             value: identified.value,
             firstSeenInteractionId: interactionId,
           });
+          logger.info('resolve.pending_identifier_queued', { 
+            kind: identified.kind, 
+            interactionId 
+          });
         });
         status = 'pending';
       } else {
@@ -102,6 +110,10 @@ export const resolveAndAttach = inngest.createFunction(
         });
         contactId = created.contact.id;
         status = 'created';
+        logger.info('resolve.contact_created', { 
+          contactId, 
+          kind: identified.kind 
+        });
       }
     }
 
@@ -128,6 +140,11 @@ export const resolveAndAttach = inngest.createFunction(
         });
       });
       sessionId = attached.session.id;
+
+      logger.info('resolve.session_attached', { 
+        sessionId, 
+        newlyOpened: attached.newlyOpened 
+      });
 
       await step.sendEvent('emit-cooldown-heartbeat', {
         name: 'nexus/session.cooldown.heartbeat',
@@ -158,6 +175,10 @@ export const resolveAndAttach = inngest.createFunction(
           },
         })),
       );
+      logger.info('resolve.transcription_emitted', { 
+        count: transcribable.length,
+        interactionId 
+      });
     }
 
     return {
