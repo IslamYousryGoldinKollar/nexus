@@ -106,6 +106,8 @@ export async function GET(req: NextRequest) {
       const key = rawInner?.key as Record<string, unknown> | undefined;
 
       const senderPn = typeof key?.senderPn === 'string' ? key.senderPn : null;
+      const participantPn = typeof key?.participantPn === 'string' ? key.participantPn : null;
+      const participant = typeof key?.participant === 'string' ? key.participant : null;
       const remoteJid = typeof key?.remoteJid === 'string' ? key.remoteJid : null;
       const pushName = typeof rawInner?.pushName === 'string' ? rawInner.pushName : null;
       const fromField = typeof raw.from === 'string' ? raw.from : null;
@@ -119,7 +121,11 @@ export async function GET(req: NextRequest) {
       const isPhoneAddr = (s: string | null): s is string =>
         !!s && !s.includes('@lid') && !s.includes('@g.us') && !s.includes('@broadcast');
 
-      const candidates = [senderPn, remoteJid, fromField].filter(isPhoneAddr);
+      // Mirror the order in extract-identifier.ts:
+      // senderPn > participantPn > participant > remoteJid > from
+      const candidates = [senderPn, participantPn, participant, remoteJid, fromField].filter(
+        isPhoneAddr,
+      );
 
       let phoneNumber: string | null = null;
       for (const cand of candidates) {
