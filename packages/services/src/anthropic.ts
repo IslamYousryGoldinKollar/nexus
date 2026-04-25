@@ -9,10 +9,9 @@ import Anthropic from '@anthropic-ai/sdk';
  *   - Session transcripts (interactions + audio transcriptions) → sent as
  *     `user` messages each call (these change per turn).
  *
- * Pricing for Sonnet 4.5 (as of writing):
- *   - input:  $3 / Mtok
- *   - cached input: $0.30 / Mtok (90% off base input)
- *   - output: $15 / Mtok
+ * Default model: Sonnet 4.6 (the previously-pinned 4.5 dated alias was
+ * retired). The legacy SONNET_4_5 export remains for any caller that
+ * pinned it explicitly; new code should reference SONNET_4_6.
  */
 
 export class AnthropicError extends Error {
@@ -33,9 +32,11 @@ export function getAnthropicClient(apiKey: string): Anthropic {
   return _client;
 }
 
-export const SONNET_4_5 = 'claude-sonnet-4-5-20250929';
+export const SONNET_4_6 = 'claude-sonnet-4-6';
+/** @deprecated Use SONNET_4_6. The dated 4.5 alias is no longer served. */
+export const SONNET_4_5 = SONNET_4_6;
 
-// Prices in USD per million tokens (Sonnet 4.5).
+// Prices in USD per million tokens (Sonnet 4.6 — same as 4.5 at writing).
 const PRICE_IN_PER_MTOK = 3;
 const PRICE_CACHE_WRITE_PER_MTOK = 3.75; // 25% markup vs base input
 const PRICE_CACHE_READ_PER_MTOK = 0.3; // 90% off

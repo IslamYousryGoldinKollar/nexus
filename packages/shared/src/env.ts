@@ -49,7 +49,7 @@ export const serverEnvSchema = z.object({
 
   // LLM
   ANTHROPIC_API_KEY: z.string().optional(),
-  ANTHROPIC_MODEL: z.string().default('claude-sonnet-4-5-20250929'),
+  ANTHROPIC_MODEL: z.string().default('claude-sonnet-4-6'),
   ANTHROPIC_MONTHLY_BUDGET_USD: z.coerce.number().default(200),
 
   // Transcription
