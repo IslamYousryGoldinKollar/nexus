@@ -73,7 +73,9 @@ class SessionStore private constructor(context: Context) {
         private const val KEY_USER_ID = "user_id"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_BASE_URL = "base_url"
-        private const val DEFAULT_BASE_URL = "https://nexus.goldinkollar.com"
+        // Vercel canonical alias. nexus.theoffsight.com isn't in DNS yet;
+        // switch to it once the CNAME is added at the registrar.
+        private const val DEFAULT_BASE_URL = "https://nexus-beta-coral.vercel.app"
 
         @Volatile private var instance: SessionStore? = null
 

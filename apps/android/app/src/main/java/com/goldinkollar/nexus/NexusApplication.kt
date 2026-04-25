@@ -10,7 +10,11 @@ class NexusApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
-        SentryInitializer.initialize(this)
+        try {
+            SentryInitializer.initialize(this)
+        } catch (t: Throwable) {
+            android.util.Log.w("NexusApp", "SentryInitializer threw — ignoring", t)
+        }
         ensureNotificationChannels()
     }
 
