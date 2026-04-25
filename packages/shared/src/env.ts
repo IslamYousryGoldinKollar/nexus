@@ -103,7 +103,10 @@ export const serverEnvSchema = z.object({
 
   // Auth
   RESEND_API_KEY: z.string().optional(),
-  RESEND_FROM_EMAIL: z.string().email().default('nexus@goldinkollar.com'),
+  // theoffsight.com is the domain verified at Resend. The mailbox does not
+  // accept inbound mail (account login is via goldinkollar email); this is
+  // a send-only From: address for magic links.
+  RESEND_FROM_EMAIL: z.string().email().default('nexus@theoffsight.com'),
   AUTH_SECRET: z.string().min(16).optional(),
 
   // Mobile pairing
