@@ -10,8 +10,7 @@ import {
   getGmailAccessToken,
   getGmailHistory,
   getGmailMessage,
-  reasonOverSession,
-  GPT_4O_MINI,
+  type GmailEmail,
 } from '@nexus/services';
 import { inngest } from '../client.js';
 
@@ -31,7 +30,7 @@ export const processGmailNotification = inngest.createFunction(
   },
   { event: 'nexus/gmail.notification.received' },
   async ({ event, step, logger }) => {
-    const { emailAddress, historyId, messageId } = event.data;
+    const { emailAddress, historyId } = event.data;
 
     // ---- 1. Get access token --------------------------------------------
     const accessToken = await step.run('get-access-token', async () => {
@@ -73,7 +72,7 @@ export const processGmailNotification = inngest.createFunction(
 
     // ---- 4. Fetch and parse each message --------------------------------
     const emails = await step.run('fetch-messages', async () => {
-      const results: Array<{ id: string; email: any | null; error?: string }> = [];
+      const results: Array<{ id: string; email: GmailEmail | null; error?: string }> = [];
       for (const id of messageIds) {
         try {
           const email = await getGmailMessage(accessToken, id);
