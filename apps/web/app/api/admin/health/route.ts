@@ -103,14 +103,19 @@ export async function GET(req: NextRequest) {
         })
         .from(sessionsTable);
 
-      // Cost metrics (this month)
+      // Cost metrics (this month). Service breakdown matches cost_service
+      // enum (anthropic, openai, openai_whisper, assemblyai, r2, other) —
+      // 'resend' is NOT a valid enum value, so filtering on it threw
+      // `invalid input value for enum cost_service: "resend"` and aborted
+      // the metrics block. Use 'other' if you need a catch-all bucket.
       const [costMetrics] = await db
         .select({
           total: sql<number>`coalesce(sum(cost_usd), 0)`,
           anthropic: sql<number>`coalesce(sum(cost_usd) filter (where service = 'anthropic'), 0)`,
+          openai: sql<number>`coalesce(sum(cost_usd) filter (where service = 'openai'), 0)`,
           openai_whisper: sql<number>`coalesce(sum(cost_usd) filter (where service = 'openai_whisper'), 0)`,
           assemblyai: sql<number>`coalesce(sum(cost_usd) filter (where service = 'assemblyai'), 0)`,
-          resend: sql<number>`coalesce(sum(cost_usd) filter (where service = 'resend'), 0)`,
+          r2: sql<number>`coalesce(sum(cost_usd) filter (where service = 'r2'), 0)`,
         })
         .from(costEventsTable)
         .where(sql`${costEventsTable.occurredAt} >= ${startOfMonth}`);

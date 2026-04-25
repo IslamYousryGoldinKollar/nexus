@@ -31,8 +31,8 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const adminKey = process.env.ADMIN_API_KEY;
-    const providedKey = req.headers.get('x-admin-key') || req.nextUrl.searchParams.get('key');
+    const adminKey = process.env.ADMIN_API_KEY?.trim();
+    const providedKey = (req.headers.get('x-admin-key') || req.nextUrl.searchParams.get('key') || '').trim();
 
     if (!adminKey || providedKey !== adminKey) {
       log.warn('admin.manual-resolve.unauthorized');
