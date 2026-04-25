@@ -19,6 +19,12 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 /**
+ * @deprecated TEMPORARY workaround for an Inngest pipeline issue
+ * (suspected env-var newline corruption — fixed in commit `d420e9a`).
+ * Slated for removal once `nexus/session.reasoning.requested` events
+ * deliver end-to-end in prod. See `docs/runbook.md` § "Debug endpoints
+ * (temporary)".
+ *
  * Direct reasoning endpoint — bypasses Inngest, runs GPT-4o-mini (OpenAI)
  * over a session immediately.
  *

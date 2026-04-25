@@ -20,6 +20,11 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
+ * @deprecated TEMPORARY workaround for an Inngest pipeline issue
+ * (suspected env-var newline corruption — fixed in commit `d420e9a`).
+ * Slated for removal once `nexus/interaction.ingested` events deliver
+ * end-to-end in prod. See `docs/runbook.md` § "Debug endpoints (temporary)".
+ *
  * Direct process endpoint - runs the FULL pipeline logic directly without Inngest.
  * This completely bypasses the Inngest webhook transform issue.
  *

@@ -20,6 +20,11 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300; // 5 minutes for batch transcription
 
 /**
+ * @deprecated TEMPORARY workaround for the Inngest transcription pipeline
+ * (suspected env-var newline corruption — fixed in commit `d420e9a`).
+ * Slated for removal once `nexus/transcription.requested` events deliver
+ * end-to-end in prod. See `docs/runbook.md` § "Debug endpoints (temporary)".
+ *
  * Batch transcribe all untranscribed audio attachments.
  *
  * GET /api/admin/batch-transcribe?limit=5

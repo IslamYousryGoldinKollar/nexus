@@ -8,6 +8,12 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
+ * @deprecated TEMPORARY workaround for an Inngest identity-resolution
+ * issue (suspected env-var newline corruption — fixed in commit `d420e9a`).
+ * Slated for removal once the `resolveAndAttach` function reliably
+ * processes `nexus/interaction.ingested`. See `docs/runbook.md` §
+ * "Debug endpoints (temporary)".
+ *
  * Manual resolve endpoint - bypasses Inngest and directly runs the
  * identity resolution logic for debugging.
  *
