@@ -5,15 +5,30 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
-import androidx.work.Configuration
 
-class NexusApplication : Application(), Configuration.Provider {
+/**
+ * Application bootstrap — deliberately minimal during launch-crash
+ * diagnosis.
+ *
+ * Removed during diagnosis (will be re-added once the underlying
+ * launch crash is identified):
+ *   - `Configuration.Provider` interface for WorkManager. The default
+ *     auto-init works without it; the only thing we lose is the
+ *     debug-vs-release logging level toggle.
+ *   - Sentry init (already stubbed in SentryInitializer; the
+ *     dependency is also commented out of build.gradle.kts).
+ *
+ * Kept:
+ *   - CrashRecorder global handler, installed in attachBaseContext
+ *     BEFORE anything else can throw. So even if the launch dies in
+ *     onCreate, the crash report lands on disk for MainActivity to
+ *     surface on next launch.
+ *   - Notification channels (essential for proposals + recording fg svc).
+ */
+class NexusApplication : Application() {
 
     override fun attachBaseContext(base: Context?) {
         super.attachBaseContext(base)
-        // Install BEFORE anything else can throw. Captures crashes in
-        // any thread and persists them to the no-backup files dir so
-        // MainActivity can render them on next launch.
         try {
             CrashRecorder.installGlobalHandler(this)
         } catch (t: Throwable) {
@@ -23,9 +38,6 @@ class NexusApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
-        // Each step wrapped so a single failure doesn't kill the app.
-        // Anything that DOES escape gets captured by the global handler
-        // installed in attachBaseContext.
         try {
             SentryInitializer.initialize(this)
         } catch (t: Throwable) {
@@ -62,12 +74,6 @@ class NexusApplication : Application(), Configuration.Provider {
             },
         )
     }
-
-    // WorkManager configuration — keep logging quiet in release.
-    override val workManagerConfiguration: Configuration =
-        Configuration.Builder()
-            .setMinimumLoggingLevel(if (BuildConfig.DEBUG) android.util.Log.DEBUG else android.util.Log.INFO)
-            .build()
 
     companion object {
         const val CHANNEL_APPROVALS = "approvals"

@@ -111,8 +111,11 @@ dependencies {
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
 
-    // Sentry for crash reporting
-    implementation("io.sentry:sentry-android:7.14.0")
+    // Sentry for crash reporting — temporarily removed while we
+    // diagnose a launch crash on the user's S24 (Samsung One UI 7).
+    // Re-add once the in-app CrashRecorder confirms the SDK isn't the
+    // culprit.
+    // implementation("io.sentry:sentry-android:7.14.0")
 
     // Biometric authentication
     implementation("androidx.biometric:biometric:1.1.0")
