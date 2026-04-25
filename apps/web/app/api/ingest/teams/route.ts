@@ -4,6 +4,7 @@ import { ingestTeamsMessage } from '@/lib/channels/teams/ingest';
 import { teamsIngestSchema } from '@/lib/channels/teams/schema';
 import { serverEnv } from '@/lib/env';
 import { log } from '@/lib/logger';
+import { withRequestId } from '@/lib/request-id';
 import { checkRateLimit, webhookRateLimiter } from '@/lib/rate-limit';
 import { ack, signatureFailed, badRequest } from '@/lib/webhook-response';
 
@@ -20,60 +21,62 @@ export const dynamic = 'force-dynamic';
  * per request. De-duplication happens server-side via upsertInteraction.
  */
 export async function POST(req: NextRequest) {
-  const rateLimit = checkRateLimit(req, webhookRateLimiter);
-  if (!rateLimit.allowed) {
-    log.warn('teams.webhook.rate_limited');
-    return new NextResponse('rate_limited', {
-      status: 429,
-      headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() },
-    });
-  }
+  return withRequestId(req, async () => {
+    const rateLimit = checkRateLimit(req, webhookRateLimiter);
+    if (!rateLimit.allowed) {
+      log.warn('teams.webhook.rate_limited');
+      return new NextResponse('rate_limited', {
+        status: 429,
+        headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() },
+      });
+    }
 
-  const expected = serverEnv.TEAMS_INGEST_API_KEY;
-  if (!expected) {
-    log.error('teams.no_key_configured', {});
-    return signatureFailed('teams');
-  }
+    const expected = serverEnv.TEAMS_INGEST_API_KEY;
+    if (!expected) {
+      log.error('teams.no_key_configured', {});
+      return signatureFailed('teams');
+    }
 
-  const auth = req.headers.get('authorization') ?? '';
-  const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-  if (!safeStringEqual(bearer, expected)) {
-    log.warn('teams.auth.invalid', { hasHeader: !!auth });
-    return signatureFailed('teams');
-  }
+    const auth = req.headers.get('authorization') ?? '';
+    const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    if (!safeStringEqual(bearer, expected)) {
+      log.warn('teams.auth.invalid', { hasHeader: !!auth });
+      return signatureFailed('teams');
+    }
 
-  let payload: unknown;
-  try {
-    payload = await req.json();
-  } catch {
-    return badRequest('invalid_json');
-  }
+    let payload: unknown;
+    try {
+      payload = await req.json();
+    } catch {
+      return badRequest('invalid_json');
+    }
 
-  const parsed = teamsIngestSchema.safeParse(payload);
-  if (!parsed.success) {
-    log.warn('teams.schema.mismatch', {
-      issues: parsed.error.issues.slice(0, 5).map((i) => ({
-        path: i.path.join('.'),
-        message: i.message,
-      })),
-    });
-    return badRequest('schema_mismatch');
-  }
+    const parsed = teamsIngestSchema.safeParse(payload);
+    if (!parsed.success) {
+      log.warn('teams.schema.mismatch', {
+        issues: parsed.error.issues.slice(0, 5).map((i) => ({
+          path: i.path.join('.'),
+          message: i.message,
+        })),
+      });
+      return badRequest('schema_mismatch');
+    }
 
-  try {
-    const result = await ingestTeamsMessage(parsed.data);
-    log.info('teams.ingested', {
-      messageId: parsed.data.messageId,
-      inserted: result.inserted,
-      hasAttachment: !!result.attachmentId,
-    });
-    return ack({
-      interactionId: result.interactionId,
-      inserted: result.inserted,
-      attachmentId: result.attachmentId,
-    });
-  } catch (err) {
-    log.error('teams.ingest_failed', { err: (err as Error).message });
-    return ack({ error: 'ingest_failed' });
-  }
+    try {
+      const result = await ingestTeamsMessage(parsed.data);
+      log.info('teams.ingested', {
+        messageId: parsed.data.messageId,
+        inserted: result.inserted,
+        hasAttachment: !!result.attachmentId,
+      });
+      return ack({
+        interactionId: result.interactionId,
+        inserted: result.inserted,
+        attachmentId: result.attachmentId,
+      });
+    } catch (err) {
+      log.error('teams.ingest_failed', { err: (err as Error).message });
+      return ack({ error: 'ingest_failed' });
+    }
+  });
 }

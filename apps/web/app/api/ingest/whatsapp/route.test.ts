@@ -314,7 +314,7 @@ describe('GET /api/ingest/whatsapp (verification handshake)', () => {
     ) as unknown as NextRequest;
     // NextRequest requires `nextUrl`; fake it minimally.
     (req as unknown as { nextUrl: URL }).nextUrl = new URL(req.url);
-    const res = GET(req);
+    const res = await GET(req);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('42');
   });
@@ -325,7 +325,7 @@ describe('GET /api/ingest/whatsapp (verification handshake)', () => {
       `https://nexus.test/api/ingest/whatsapp?hub.mode=subscribe&hub.verify_token=WRONG&hub.challenge=42`,
     ) as unknown as NextRequest;
     (req as unknown as { nextUrl: URL }).nextUrl = new URL(req.url);
-    const res = GET(req);
+    const res = await GET(req);
     expect(res.status).toBe(403);
   });
 });

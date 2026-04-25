@@ -47,3 +47,21 @@ export function getCurrentRequestId(): string | undefined {
     return undefined;
   }
 }
+
+/**
+ * Convenience wrapper for route handlers. Reads `x-request-id` from the
+ * incoming request (set by middleware), or generates a fresh one, and
+ * runs the handler body inside a `runWithRequestId` scope so every
+ * `log.*()` call inside it auto-tags `request_id`.
+ *
+ * Usage:
+ *   export async function POST(req: NextRequest) {
+ *     return withRequestId(req, async () => {
+ *       // existing body
+ *     });
+ *   }
+ */
+export function withRequestId<T>(req: { headers: Headers }, fn: () => T | Promise<T>): Promise<T> {
+  const id = getOrCreateRequestId(req.headers);
+  return Promise.resolve(runWithRequestId(id, () => Promise.resolve(fn())));
+}

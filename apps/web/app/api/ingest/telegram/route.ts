@@ -6,6 +6,7 @@ import { ingestTelegramUpdate } from '@/lib/channels/telegram/ingest';
 import { telegramUpdate } from '@/lib/channels/telegram/schema';
 import { serverEnv } from '@/lib/env';
 import { log } from '@/lib/logger';
+import { withRequestId } from '@/lib/request-id';
 import { parseJsonFromBytes, readRawBody } from '@/lib/raw-body';
 import { checkRateLimit, webhookRateLimiter } from '@/lib/rate-limit';
 import { ack, signatureFailed } from '@/lib/webhook-response';
@@ -25,101 +26,103 @@ export const dynamic = 'force-dynamic';
  * Phase 9 adds the approval-callback_query handlers.
  */
 export async function POST(req: NextRequest) {
-  const rateLimit = checkRateLimit(req, webhookRateLimiter);
-  if (!rateLimit.allowed) {
-    log.warn('telegram.webhook.rate_limited');
-    return new NextResponse('rate_limited', {
-      status: 429,
-      headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() },
-    });
-  }
-
-  const expected = serverEnv.TELEGRAM_WEBHOOK_SECRET;
-  if (!expected) {
-    log.error('telegram.webhook.no_secret_configured');
-    return signatureFailed('telegram');
-  }
-
-  const provided = req.headers.get('x-telegram-bot-api-secret-token') ?? '';
-  if (!safeStringEqual(provided, expected)) {
-    log.warn('telegram.signature.invalid', { hasHeader: !!provided });
-    return signatureFailed('telegram');
-  }
-
-  const raw = await readRawBody(req);
-  let payload: unknown;
-  try {
-    payload = parseJsonFromBytes(raw);
-  } catch (err) {
-    log.warn('telegram.body.invalid_json', { err: (err as Error).message });
-    return ack({ ignored: 'invalid_json' });
-  }
-
-  const parsed = telegramUpdate.safeParse(payload);
-  if (!parsed.success) {
-    log.warn('telegram.schema.mismatch', {
-      issues: parsed.error.issues.slice(0, 5).map((i) => ({
-        path: i.path.join('.'),
-        message: i.message,
-      })),
-    });
-    return ack({ ignored: 'schema_mismatch' });
-  }
-
-  // Phase 9 — process approval button taps before the ingest path skips them.
-  if (parsed.data.callback_query) {
-    try {
-      const cb = parsed.data.callback_query as {
-        id: string;
-        from: { id: number; username?: string };
-        data?: string;
-        message?: { message_id: number; chat: { id: number } };
-      };
-      await handleTelegramCallback(cb);
-      return ack({ callback: 'handled' });
-    } catch (err) {
-      log.error('telegram.callback.handler_failed', {
-        err: (err as Error).message,
+  return withRequestId(req, async () => {
+    const rateLimit = checkRateLimit(req, webhookRateLimiter);
+    if (!rateLimit.allowed) {
+      log.warn('telegram.webhook.rate_limited');
+      return new NextResponse('rate_limited', {
+        status: 429,
+        headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() },
       });
-      return ack({ callback: 'handler_failed' });
     }
-  }
 
-  // Phase 9 — process text commands before the ingest path.
-  if (parsed.data.message?.text?.startsWith('/')) {
+    const expected = serverEnv.TELEGRAM_WEBHOOK_SECRET;
+    if (!expected) {
+      log.error('telegram.webhook.no_secret_configured');
+      return signatureFailed('telegram');
+    }
+
+    const provided = req.headers.get('x-telegram-bot-api-secret-token') ?? '';
+    if (!safeStringEqual(provided, expected)) {
+      log.warn('telegram.signature.invalid', { hasHeader: !!provided });
+      return signatureFailed('telegram');
+    }
+
+    const raw = await readRawBody(req);
+    let payload: unknown;
     try {
-      const msg = parsed.data.message as {
-        message_id: number;
-        chat: { id: number };
-        from: { id: number; username?: string };
-        text: string;
-      };
-      await handleTelegramCommand(msg);
-      return ack({ command: 'handled' });
+      payload = parseJsonFromBytes(raw);
     } catch (err) {
-      log.error('telegram.command.handler_failed', {
-        err: (err as Error).message,
-      });
-      return ack({ command: 'handler_failed' });
+      log.warn('telegram.body.invalid_json', { err: (err as Error).message });
+      return ack({ ignored: 'invalid_json' });
     }
-  }
 
-  try {
-    const outcomes = await ingestTelegramUpdate(parsed.data);
-    const inserted = outcomes.filter((o) => o.inserted).length;
-    const skipped = outcomes.filter((o) => o.skipped).length;
-    log.info('telegram.webhook.ingested', {
-      updateId: parsed.data.update_id,
-      total: outcomes.length,
-      inserted,
-      skipped,
-    });
-    return ack({ ingested: inserted, skipped });
-  } catch (err) {
-    log.error('telegram.webhook.ingest_failed', {
-      err: (err as Error).message,
-      stack: (err as Error).stack,
-    });
-    return ack({ error: 'ingest_failed' });
-  }
+    const parsed = telegramUpdate.safeParse(payload);
+    if (!parsed.success) {
+      log.warn('telegram.schema.mismatch', {
+        issues: parsed.error.issues.slice(0, 5).map((i) => ({
+          path: i.path.join('.'),
+          message: i.message,
+        })),
+      });
+      return ack({ ignored: 'schema_mismatch' });
+    }
+
+    // Phase 9 — process approval button taps before the ingest path skips them.
+    if (parsed.data.callback_query) {
+      try {
+        const cb = parsed.data.callback_query as {
+          id: string;
+          from: { id: number; username?: string };
+          data?: string;
+          message?: { message_id: number; chat: { id: number } };
+        };
+        await handleTelegramCallback(cb);
+        return ack({ callback: 'handled' });
+      } catch (err) {
+        log.error('telegram.callback.handler_failed', {
+          err: (err as Error).message,
+        });
+        return ack({ callback: 'handler_failed' });
+      }
+    }
+
+    // Phase 9 — process text commands before the ingest path.
+    if (parsed.data.message?.text?.startsWith('/')) {
+      try {
+        const msg = parsed.data.message as {
+          message_id: number;
+          chat: { id: number };
+          from: { id: number; username?: string };
+          text: string;
+        };
+        await handleTelegramCommand(msg);
+        return ack({ command: 'handled' });
+      } catch (err) {
+        log.error('telegram.command.handler_failed', {
+          err: (err as Error).message,
+        });
+        return ack({ command: 'handler_failed' });
+      }
+    }
+
+    try {
+      const outcomes = await ingestTelegramUpdate(parsed.data);
+      const inserted = outcomes.filter((o) => o.inserted).length;
+      const skipped = outcomes.filter((o) => o.skipped).length;
+      log.info('telegram.webhook.ingested', {
+        updateId: parsed.data.update_id,
+        total: outcomes.length,
+        inserted,
+        skipped,
+      });
+      return ack({ ingested: inserted, skipped });
+    } catch (err) {
+      log.error('telegram.webhook.ingest_failed', {
+        err: (err as Error).message,
+        stack: (err as Error).stack,
+      });
+      return ack({ error: 'ingest_failed' });
+    }
+  });
 }
