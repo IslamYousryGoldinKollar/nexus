@@ -192,12 +192,14 @@ Full spec in `docs/mobile-app.md` (written in Phase 7).
 | Next.js 15 App Router on Vercel | Webhooks + admin UI in one deploy; edge-compatible health + CDN for static. |
 | Drizzle over Prisma | Type safety + raw SQL escape hatch; thinner at this scale. |
 | Inngest over QStash/BullMQ | Multi-step durable workflows with replay; we need `sleep 30m` as a first-class op. |
-| Claude Sonnet 4.5 with prompt caching | Reasoning quality + cached system prompt reduces cost 40-60% per run. |
+| OpenAI GPT-4o-mini as primary reasoner (default since 2026-04-23, commit `3494bd1`) | ~20× cheaper than Sonnet for our session sizes; quality trade-off acceptable for v1. Anthropic Sonnet 4.6 path retained in `packages/services/src/reason.ts` as a fallback — flip via `provider: 'anthropic'` arg or set `ANTHROPIC_MODEL` + remove the OpenAI default. |
 | Supabase Postgres 17 | Managed PG + free auth/storage/realtime; branching for safe CI migrations; agent can provision and migrate via MCP. |
 | pnpm + Turbo | Fast monorepo builds; Vercel's native support. |
 | Android only (no iOS) | iOS blocks call recording at OS level; single platform keeps scope sane. |
 | Mobile primary / Telegram fallback | User preference (see plan file). Telegram loses its "primary HITL" status from the original spec. |
 | RBAC future-proofed, but single-user v1 | `users.role` column exists; no UI yet — add later via INSERT, no migration. |
+| In-memory rate limiting (sliding window) | Acceptable on a single Vercel function instance per IP source; revisit with Upstash Redis if we ever scale horizontally past one warm container. |
+| Edge middleware applies security headers + request-id globally | Centralizes baseline cross-cutting concerns; per-route handlers don't need to remember to add CSP/X-Frame/etc. Request-id is plumbed through `lib/request-id.ts` ALS so any `runWithRequestId(...)`-wrapped handler gets auto-tagged log lines. |
 
 ---
 
