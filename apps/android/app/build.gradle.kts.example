@@ -1,0 +1,24 @@
+// Signing configuration for release builds
+// Copy this file to signing-config.gradle and fill in your keystore details
+
+android {
+    signingConfigs {
+        create("release") {
+            storeFile = file("/path/to/your/keystore.jks")
+            storePassword = "your_store_password"
+            keyAlias = "your_key_alias"
+            keyPassword = "your_key_password"
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
+    }
+}
