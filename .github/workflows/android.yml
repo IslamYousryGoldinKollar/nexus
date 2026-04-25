@@ -46,6 +46,20 @@ jobs:
             gradle wrapper --gradle-version 8.10 --no-daemon
           fi
 
+      - name: Run JVM unit tests
+        # Gates the APK build — if a unit test fails, no APK is produced.
+        # Right now this covers CrashRecorder; expand as we add more
+        # JVM-only logic.
+        run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-report
+          path: apps/android/app/build/reports/tests/
+          retention-days: 14
+
       - name: Assemble debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
         env:
