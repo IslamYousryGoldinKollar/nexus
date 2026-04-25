@@ -127,6 +127,9 @@ jobs:
           disable-animations: true
           script: echo "AVD warmed"
 
+      - name: Make smoke-test script executable
+        run: chmod +x apps/android/scripts/smoke-test.sh
+
       - name: Install APK + launch MainActivity + capture logcat
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -136,56 +139,7 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
-          script: |
-            set -e
-            # The upload-artifact step preserves the full source path,
-            # so the APK lives somewhere under apk/. Use find to locate
-            # it regardless of nesting.
-            APK=$(find apk -name 'nexus-*.apk' -type f | head -1)
-            if [ -z "$APK" ]; then
-              echo "::error::No APK found under apk/. Tree:"
-              find apk -type f
-              exit 1
-            fi
-            echo "::group::Installing $APK"
-            adb install -r "$APK"
-            echo "::endgroup::"
-
-            # Clear logcat then start the launcher activity.
-            adb logcat -c
-            echo "::group::Launching MainActivity"
-            adb shell am start -W -n com.goldinkollar.nexus.debug/com.goldinkollar.nexus.MainActivity
-            echo "::endgroup::"
-
-            # Give the app 8 seconds to either render or crash.
-            sleep 8
-
-            # Capture everything tagged with our app's package or showing
-            # AndroidRuntime crashes — and any of our own log tags.
-            echo "::group::logcat (last 8s)"
-            adb logcat -d -t 1000 \
-              AndroidRuntime:E \
-              SentryInitializer:* \
-              NexusApp:* \
-              MainActivity:* \
-              CrashRecorder:* \
-              SessionStore:* \
-              "*:F" \
-              | head -300
-            echo "::endgroup::"
-
-            # Did the process survive?
-            PID=$(adb shell pidof com.goldinkollar.nexus.debug || echo "")
-            if [ -z "$PID" ]; then
-              echo "::error::Nexus process died within 8 seconds"
-              # Re-dump full logcat as the error context
-              adb logcat -d -t 500 | tail -200
-              exit 1
-            fi
-            echo "::notice::Nexus is alive after 8 seconds (pid=$PID)"
-
-            # Bonus: pull /data/data/com.goldinkollar.nexus.debug/files/last-crash.txt
-            # if it exists. The CrashRecorder writes there.
-            adb shell run-as com.goldinkollar.nexus.debug \
-              cat /data/data/com.goldinkollar.nexus.debug/files/last-crash.txt 2>/dev/null \
-              || echo "(no last-crash.txt)"
+          # Single-command invocation — the action's own `script:` runs
+          # each line as a separate `sh -c` which breaks multi-line
+          # constructs like `if ... fi`. Delegate to a real script file.
+          script: bash apps/android/scripts/smoke-test.sh apk
