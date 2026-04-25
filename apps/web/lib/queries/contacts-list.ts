@@ -7,6 +7,7 @@ import {
   eq,
   getDb,
   inArray,
+  sessions,
   sql,
   type Contact,
   type ContactIdentifier,
@@ -36,12 +37,12 @@ export async function listContacts(limit = 200): Promise<ContactListRow[]> {
       .orderBy(asc(contactIdentifiers.kind)),
     db
       .select({
-        contactId: sql<string>`contact_id`,
+        contactId: sessions.contactId,
         count: sql<number>`count(*)::int`,
       })
-      .from(sql`sessions`)
-      .where(sql`contact_id = any(${ids})`)
-      .groupBy(sql`contact_id`),
+      .from(sessions)
+      .where(inArray(sessions.contactId, ids))
+      .groupBy(sessions.contactId),
   ]);
 
   const identsByContact = new Map<string, ContactIdentifier[]>();
@@ -51,8 +52,8 @@ export async function listContacts(limit = 200): Promise<ContactListRow[]> {
     identsByContact.set(i.contactId, list);
   }
   const countsByContact = new Map<string, number>();
-  for (const c of counts as unknown as Array<{ contactId: string; count: number }>) {
-    countsByContact.set(c.contactId, Number(c.count));
+  for (const c of counts) {
+    if (c.contactId) countsByContact.set(c.contactId, Number(c.count));
   }
 
   return rows.map((c) => ({
