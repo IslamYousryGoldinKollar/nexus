@@ -26,6 +26,7 @@ const PUBLIC_PATHS = [
   '/api/inngest',
   '/api/ingest',
   '/api/admin',
+  '/api/cron',
   '/_next',
   '/favicon.ico',
 ];
