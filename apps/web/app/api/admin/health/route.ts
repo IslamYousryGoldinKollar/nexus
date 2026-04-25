@@ -108,6 +108,11 @@ export async function GET(req: NextRequest) {
       // 'resend' is NOT a valid enum value, so filtering on it threw
       // `invalid input value for enum cost_service: "resend"` and aborted
       // the metrics block. Use 'other' if you need a catch-all bucket.
+      // Pass timestamps as ISO strings — Drizzle's `${date}` interpolation
+      // hands the Postgres driver a JS Date, which the node-postgres serializer
+      // then rejects ("must be of type string or … Buffer / ArrayBuffer …").
+      const monthStartIso = startOfMonth.toISOString();
+      const dayStartIso = startOfDay.toISOString();
       const [costMetrics] = await db
         .select({
           total: sql<number>`coalesce(sum(cost_usd), 0)`,
@@ -118,13 +123,13 @@ export async function GET(req: NextRequest) {
           r2: sql<number>`coalesce(sum(cost_usd) filter (where service = 'r2'), 0)`,
         })
         .from(costEventsTable)
-        .where(sql`${costEventsTable.occurredAt} >= ${startOfMonth}`);
+        .where(sql`${costEventsTable.occurredAt} >= ${monthStartIso}`);
 
       // Cost metrics (today)
       const [costToday] = await db
         .select({ total: sql<number>`coalesce(sum(cost_usd), 0)` })
         .from(costEventsTable)
-        .where(sql`${costEventsTable.occurredAt} >= ${startOfDay}`);
+        .where(sql`${costEventsTable.occurredAt} >= ${dayStartIso}`);
 
       metrics = {
         sessions: sessionMetrics,

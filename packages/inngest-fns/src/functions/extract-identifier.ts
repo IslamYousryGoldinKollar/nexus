@@ -47,10 +47,15 @@ export function extractIdentifier(
       const key = (raw?.key as Record<string, unknown> | undefined) ?? null;
       const senderPn = typeof key?.senderPn === 'string' ? key.senderPn : null;
       const participantPn = typeof key?.participantPn === 'string' ? key.participantPn : null;
+      // Baileys exposes the actual sender of a group message as
+      // `key.participant` (a JID like "<phone>@s.whatsapp.net"). Newer
+      // versions also surface `key.participantPn` as a clean phone, but
+      // not all messages carry it — fall back to `participant`.
+      const participant = typeof key?.participant === 'string' ? key.participant : null;
       const remoteJid = typeof key?.remoteJid === 'string' ? key.remoteJid : null;
       const pushName = typeof raw?.pushName === 'string' ? raw.pushName : null;
       const fromField = typeof p.from === 'string' ? p.from : null;
-      
+
       // For Meta Cloud webhook, check context.from for group messages
       const context = (p.context as Record<string, unknown> | undefined) ?? null;
       const contextFrom = typeof context?.from === 'string' ? context.from : null;
@@ -75,7 +80,12 @@ export function extractIdentifier(
         }
       }
 
-      for (const cand of [senderPn, participantPn, remoteJid, fromField].filter(isPhoneAddr)) {
+      // For Baileys group messages: prefer key.participant (real sender)
+      // before falling back to remoteJid (group). Order matters — the
+      // first phone-shaped candidate wins.
+      for (const cand of [senderPn, participantPn, participant, remoteJid, fromField].filter(
+        isPhoneAddr,
+      )) {
         const wa = normalizeWaId(stripJid(cand));
         if (wa) return { kind: 'whatsapp_wa_id', value: wa, displayHint: pushName ?? cand };
       }

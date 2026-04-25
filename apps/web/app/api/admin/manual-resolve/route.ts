@@ -65,6 +65,8 @@ export async function GET(req: NextRequest) {
       const key = rawInner?.key as Record<string, unknown> | undefined;
 
       const senderPn = typeof key?.senderPn === 'string' ? key.senderPn : null;
+      const participantPn = typeof key?.participantPn === 'string' ? key.participantPn : null;
+      const participant = typeof key?.participant === 'string' ? key.participant : null;
       const remoteJid = typeof key?.remoteJid === 'string' ? key.remoteJid : null;
       const pushName = typeof rawInner?.pushName === 'string' ? rawInner.pushName : null;
       const fromField = typeof raw.from === 'string' ? raw.from : null;
@@ -78,7 +80,9 @@ export async function GET(req: NextRequest) {
       const isPhoneAddr = (s: string | null): s is string =>
         !!s && !s.includes('@lid') && !s.includes('@g.us') && !s.includes('@broadcast');
 
-      const candidates = [senderPn, remoteJid, fromField].filter(isPhoneAddr);
+      const candidates = [senderPn, participantPn, participant, remoteJid, fromField].filter(
+        isPhoneAddr,
+      );
 
       let identified = null;
       for (const cand of candidates) {
@@ -102,6 +106,8 @@ export async function GET(req: NextRequest) {
         rawPayload: {
           from: fromField,
           senderPn,
+          participantPn,
+          participant,
           remoteJid,
           pushName,
         },
