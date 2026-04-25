@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nexus</string>
+    <string name="app_description">AI Chief of Staff - Approve tasks and manage your workflow</string>
+    <string name="pairing_title">Pair this device</string>
+    <string name="pairing_instructions">Open Nexus admin → Settings → Pair new device, then scan QR or type the 6-character code below.</string>
+    <string name="pairing_code_label">Pairing code</string>
+    <string name="pair_button">Pair</string>
+    <string name="scan_qr_button">Scan QR</string>
+    <string name="cancel_button">Cancel</string>
+    <string name="approvals_title">Approvals</string>
+    <string name="refresh_button">Refresh</string>
+    <string name="inbox_zero">Inbox zero ✨</string>
+    <string name="approve_button">Approve</string>
+    <string name="reject_button">Reject</string>
+    <string name="edit_button">Edit</string>
+    <string name="channel_approvals">Approvals</string>
+    <string name="channel_approvals_description">New tasks Nexus is asking you to approve.</string>
+    <string name="channel_recording">Background recording</string>
+    <string name="channel_recording_description">Persistent notice while watching the call-recording folder.</string>
+    <string name="permission_camera_required">Camera permission is required to scan QR codes</string>
+    <string name="permission_storage_required">Storage permission is required for call recording</string>
+    <string name="permission_notification_required">Notification permission is required for push notifications</string>
+</resources>

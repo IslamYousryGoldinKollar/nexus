@@ -10,6 +10,7 @@ class NexusApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        SentryInitializer.initialize(this)
         ensureNotificationChannels()
     }
 

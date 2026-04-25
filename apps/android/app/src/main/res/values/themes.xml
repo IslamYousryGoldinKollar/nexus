@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Light Theme -->
+    <style name="Theme.Nexus" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="colorPrimary">@color/nexus_primary</item>
+        <item name="colorPrimaryDark">@color/nexus_primary_container</item>
+        <item name="colorAccent">@color/nexus_secondary</item>
+        <item name="android:statusBarColor">@color/nexus_primary_container</item>
+        <item name="android:windowBackground">@color/nexus_background</item>
+    </style>
+
+    <!-- Dark Theme -->
+    <style name="Theme.Nexus.Dark" parent="android:Theme.Material.NoActionBar">
+        <item name="colorPrimary">@color/nexus_primary_dark</item>
+        <item name="colorPrimaryDark">@color/nexus_primary_container_dark</item>
+        <item name="colorAccent">@color/nexus_secondary_dark</item>
+        <item name="android:statusBarColor">@color/nexus_background_dark</item>
+        <item name="android:windowBackground">@color/nexus_background_dark</item>
+    </style>
+</resources>

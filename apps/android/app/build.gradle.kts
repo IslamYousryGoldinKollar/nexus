@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("com.google.devtools.ksp") version "2.1.0-1.0.29"
     // google-services applied conditionally below if google-services.json exists.
 }
 
@@ -98,6 +99,23 @@ dependencies {
     // FCM (declared but tolerated if google-services.json absent)
     implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
     implementation("com.google.firebase:firebase-messaging-ktx")
+
+    // QR Code Scanning (CameraX + ML Kit)
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.camera:camera-view:1.3.4")
+    implementation("com.google.mlkit:barcode-scanning:17.2.0")
+
+    // Room Database for offline caching
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
+
+    // Sentry for crash reporting
+    implementation("io.sentry:sentry-android:7.14.0")
+
+    // Biometric authentication
+    implementation("androidx.biometric:biometric:1.1.0")
 
     // Tests
     testImplementation("junit:junit:4.13.2")
