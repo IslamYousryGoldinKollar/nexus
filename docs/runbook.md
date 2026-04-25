@@ -181,3 +181,11 @@ If everything is on fire and you want to stop the world:
 3. Telegram bot: deleteWebhook to prevent updates piling up.
 4. Reach for backups; everything we ingest is dedupable so re-running once you're back is safe.
 ```
+
+## Debug endpoints (temporary)
+
+The `/api/admin/{direct-process,direct-reasoning,process-backlog,batch-transcribe,trigger-reasoning,manual-resolve}` endpoints were added 2026-04-22 to bypass an Inngest pipeline that was silently dropping events. The suspected root cause was trailing `\n` characters baked into `INNGEST_SIGNING_KEY` (and similar) by `vercel env add` — fixed in commit `d420e9a` by trimming all values once in `parseServerEnv`.
+
+**After the next prod deploy that includes commit `d420e9a`:** verify Inngest is delivering events end-to-end (send a real WhatsApp message and watch the function-run dashboard). Once confirmed, the `direct-*`, `process-backlog`, `batch-transcribe`, `trigger-reasoning`, and `manual-resolve` endpoints can be deleted — they duplicate Inngest function logic and should not be a permanent surface.
+
+Keep `/api/admin/{health,replay-interaction}` regardless — they are operator tools referenced in playbooks above.
