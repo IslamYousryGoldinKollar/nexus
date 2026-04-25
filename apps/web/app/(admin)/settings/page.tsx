@@ -1,5 +1,6 @@
 import { Construction } from 'lucide-react';
 import { env } from '@/lib/env';
+import { PairDeviceCard } from './pair-device-card';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,6 +9,8 @@ export const dynamic = 'force-dynamic';
  * are configured (env-based) so an admin can confirm secrets landed
  * without dropping into Vercel. OAuth-flow buttons (Gmail connect,
  * Google Drive root pick) ship in Phase 5+.
+ *
+ * Also hosts the device-pairing UI (Phase 7) for the Android app.
  */
 export default function SettingsPage() {
   let serverEnv;
@@ -49,6 +52,8 @@ export default function SettingsPage() {
           <Construction className="size-3.5" /> read-only · OAuth buttons in Phase 5+
         </span>
       </header>
+
+      <PairDeviceCard />
 
       <div className="overflow-hidden rounded-lg border border-border bg-card">
         <ul className="divide-y divide-border">
