@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getDb, contacts, eq } from '@nexus/db';
 import { z } from 'zod';
+import { readSession } from '@/lib/auth/session';
+import { isAllowedAdmin } from '@/lib/auth/admin-allowlist';
+import { log } from '@/lib/logger';
 
 const schema = z.object({
   allowTranscription: z.boolean().optional(),
@@ -11,6 +14,13 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // Require admin session authentication
+  const session = await readSession();
+  if (!session || !isAllowedAdmin(session.email)) {
+    log.warn('contacts.privacy.unauthorized', { email: session?.email ?? 'none' });
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
+
   try {
     const { id } = await params;
     const body = await req.json();
@@ -44,9 +54,13 @@ export async function PATCH(
       .set(updateData)
       .where(eq(contacts.id, id));
 
+    log.info('contacts.privacy.updated', { contactId: id, email: session.email });
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error('Failed to update contact privacy:', err);
+    log.error('contacts.privacy.error', {
+      error: (err as Error).message,
+      stack: (err as Error).stack,
+    });
     return NextResponse.json({ error: 'internal_error' }, { status: 500 });
   }
 }
