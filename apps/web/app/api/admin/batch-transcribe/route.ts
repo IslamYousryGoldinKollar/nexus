@@ -8,6 +8,8 @@ import {
 } from '@nexus/db';
 import { supabaseStorageCredsFromEnv, signSupabaseGetUrl } from '@nexus/services';
 import { transcribe } from '@nexus/services';
+import { checkRateLimit, strictRateLimiter } from '@/lib/rate-limit';
+import { log } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,6 +23,16 @@ export const maxDuration = 300; // 5 minutes for batch transcription
  * Auth: Requires ADMIN_API_KEY via x-admin-key header or key query param.
  */
 export async function GET(req: NextRequest) {
+  // Rate limiting for admin endpoints
+  const rateLimit = checkRateLimit(req, strictRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('admin.batch-transcribe.rate_limited');
+    return NextResponse.json(
+      { error: 'Rate limited' },
+      { status: 429, headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() } }
+    );
+  }
+
   const adminKey = process.env.ADMIN_API_KEY?.trim();
   const providedKey = (req.headers.get('x-admin-key') || req.nextUrl.searchParams.get('key') || '').trim();
   
@@ -37,16 +49,21 @@ export async function GET(req: NextRequest) {
   }
   
   if (!adminKey || providedKey !== adminKey) {
+    log.warn('admin.batch-transcribe.unauthorized');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const limit = parseInt(req.nextUrl.searchParams.get('limit') || '3', 10);
+  if (limit > 10) {
+    return NextResponse.json({ error: 'Limit cannot exceed 10' }, { status: 400 });
+  }
 
   try {
     const db = getDb();
     const storageCreds = supabaseStorageCredsFromEnv();
     
     if (!storageCreds) {
+      log.error('admin.batch-transcribe.no_storage_creds');
       return NextResponse.json({ error: 'No Supabase Storage credentials' }, { status: 500 });
     }
 
@@ -135,13 +152,26 @@ export async function GET(req: NextRequest) {
         attResult['transcriptId'] = newTranscripts[0].id;
         attResult['text'] = transcriptResult.text.substring(0, 100);
         attResult['language'] = transcriptResult.language;
+        log.info('admin.batch-transcribe.attachment_processed', { 
+          attachmentId: att.attachmentId,
+          language: transcriptResult.language,
+        });
       } catch (err) {
         attResult['success'] = false;
         attResult['error'] = (err as Error).message;
+        log.error('admin.batch-transcribe.attachment_failed', {
+          attachmentId: att.attachmentId,
+          error: (err as Error).message,
+        });
       }
 
       results.push(attResult);
     }
+
+    log.info('admin.batch-transcribe.completed', {
+      processed: results.length,
+      successful: results.filter(r => r['success']).length,
+    });
 
     return NextResponse.json({
       processed: results.length,
@@ -149,8 +179,12 @@ export async function GET(req: NextRequest) {
     }, { status: 200 });
 
   } catch (err) {
+    log.error('admin.batch-transcribe.error', {
+      error: (err as Error).message,
+      stack: (err as Error).stack,
+    });
     return NextResponse.json(
-      { error: (err as Error).message, stack: (err as Error).stack },
+      { error: (err as Error).message },
       { status: 500 }
     );
   }

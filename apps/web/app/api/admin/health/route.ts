@@ -1,11 +1,23 @@
-import { NextResponse } from 'next/server';
+import { type NextRequest, NextResponse } from 'next/server';
 import { serverEnv } from '@/lib/env';
 import { getDb, costEvents as costEventsTable, sql, sessions as sessionsTable } from '@nexus/db';
+import { checkRateLimit, apiRateLimiter } from '@/lib/rate-limit';
+import { log } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // Rate limiting for health endpoint to prevent abuse
+  const rateLimit = checkRateLimit(req, apiRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('admin.health.rate_limited');
+    return NextResponse.json(
+      { error: 'Rate limited' },
+      { status: 429, headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() } }
+    );
+  }
+
   // Check critical env vars without exposing values
   const checks = {
     resendApiKey: {
@@ -65,6 +77,7 @@ export async function GET() {
     dbStatus = 'connected';
   } catch (err) {
     dbStatus = `error: ${(err as Error).message}`;
+    log.error('admin.health.db_error', { error: (err as Error).message });
   }
 
   // Get metrics
@@ -115,6 +128,7 @@ export async function GET() {
     };
   } catch (err) {
     metrics = { error: (err as Error).message };
+    log.error('admin.health.metrics_error', { error: (err as Error).message });
   }
 
   return NextResponse.json({

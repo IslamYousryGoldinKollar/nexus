@@ -1,5 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { getDb, interactions as interactionsTable, eq } from '@nexus/db';
+import { checkRateLimit, strictRateLimiter } from '@/lib/rate-limit';
+import { log } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,10 +13,21 @@ export const dynamic = 'force-dynamic';
  * GET /api/admin/manual-resolve?interactionId=<uuid>
  */
 export async function GET(req: NextRequest) {
+  // Rate limiting for admin endpoints
+  const rateLimit = checkRateLimit(req, strictRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('admin.manual-resolve.rate_limited');
+    return NextResponse.json(
+      { error: 'Rate limited' },
+      { status: 429, headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() } }
+    );
+  }
+
   const adminKey = process.env.ADMIN_API_KEY;
   const providedKey = req.headers.get('x-admin-key') || req.nextUrl.searchParams.get('key');
   
   if (!adminKey || providedKey !== adminKey) {
+    log.warn('admin.manual-resolve.unauthorized');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -34,6 +47,7 @@ export async function GET(req: NextRequest) {
       .limit(1);
 
     if (!interaction) {
+      log.warn('admin.manual-resolve.not_found', { interactionId });
       return NextResponse.json({ error: 'Interaction not found' }, { status: 404 });
     }
 
@@ -88,10 +102,16 @@ export async function GET(req: NextRequest) {
       currentSessionId: interaction.sessionId,
     };
 
+    log.info('admin.manual-resolve.completed', { interactionId, identified: !!identified });
     return NextResponse.json(result, { status: 200 });
   } catch (err) {
+    log.error('admin.manual-resolve.error', {
+      error: (err as Error).message,
+      stack: (err as Error).stack,
+      interactionId,
+    });
     return NextResponse.json(
-      { error: (err as Error).message, stack: (err as Error).stack },
+      { error: (err as Error).message },
       { status: 500 }
     );
   }

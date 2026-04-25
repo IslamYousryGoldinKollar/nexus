@@ -11,6 +11,8 @@ import {
 } from '@nexus/db';
 import { supabaseStorageCredsFromEnv, signSupabaseGetUrl } from '@nexus/services';
 import { transcribe } from '@nexus/services';
+import { checkRateLimit, strictRateLimiter } from '@/lib/rate-limit';
+import { log } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -31,10 +33,21 @@ export const dynamic = 'force-dynamic';
  * but this gets messages through the critical Phases 2-3.
  */
 export async function GET(req: NextRequest) {
+  // Rate limiting for admin endpoints
+  const rateLimit = checkRateLimit(req, strictRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('admin.direct-process.rate_limited');
+    return NextResponse.json(
+      { error: 'Rate limited' },
+      { status: 429, headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() } }
+    );
+  }
+
   const adminKey = process.env.ADMIN_API_KEY;
   const providedKey = req.headers.get('x-admin-key') || req.nextUrl.searchParams.get('key');
   
   if (!adminKey || providedKey !== adminKey) {
+    log.warn('admin.direct-process.unauthorized');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -168,6 +181,7 @@ export async function GET(req: NextRequest) {
           action: 'created_new', 
           contactId: contactId!
         };
+        log.info('admin.direct-process.contact_created', { contactId, phoneNumber });
       } else {
         results.phases['contactResolution'] = { 
           action: 'would_create', 
@@ -222,6 +236,7 @@ export async function GET(req: NextRequest) {
           action: 'created_new', 
           sessionId 
         };
+        log.info('admin.direct-process.session_created', { sessionId, contactId });
       }
     } else if (!sessionId && contactId && dryRun) {
       results.phases.sessionResolution = { 
@@ -241,6 +256,7 @@ export async function GET(req: NextRequest) {
         .where(eq(interactionsTable.id, interactionId));
 
       results.phases.updateInteraction = { success: true };
+      log.info('admin.direct-process.interaction_updated', { interactionId, contactId, sessionId });
     }
 
     // === PHASE 6: Transcribe audio attachments ===
@@ -308,11 +324,19 @@ export async function GET(req: NextRequest) {
               text: transcriptResult.text?.substring(0, 100) + '...',
               provider: transcriptResult.provider,
             };
+            log.info('admin.direct-process.transcription_completed', { 
+              transcriptId: newTranscripts[0].id,
+              attachmentId: attachment.id,
+            });
           } catch (transErr) {
             results.phases['transcription'] = {
               success: false,
               error: (transErr as Error).message,
             };
+            log.error('admin.direct-process.transcription_failed', {
+              attachmentId: attachment.id,
+              error: (transErr as Error).message,
+            });
           }
           } else {
             results.phases['transcription'] = {
@@ -330,6 +354,13 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    log.info('admin.direct-process.completed', {
+      interactionId,
+      dryRun,
+      contactId,
+      sessionId,
+    });
+
     return NextResponse.json({
       success: true,
       ...results,
@@ -339,8 +370,13 @@ export async function GET(req: NextRequest) {
     }, { status: 200 });
 
   } catch (err) {
+    log.error('admin.direct-process.error', {
+      error: (err as Error).message,
+      stack: (err as Error).stack,
+      interactionId,
+    });
     return NextResponse.json(
-      { error: (err as Error).message, stack: (err as Error).stack, results },
+      { error: (err as Error).message, results },
       { status: 500 }
     );
   }

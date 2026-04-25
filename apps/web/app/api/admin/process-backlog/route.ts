@@ -1,6 +1,8 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { getDb, interactions as interactionsTable, eq, and, isNull } from '@nexus/db';
 import { inngest } from '@nexus/inngest-fns';
+import { checkRateLimit, strictRateLimiter } from '@/lib/rate-limit';
+import { log } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,15 +19,30 @@ export const dynamic = 'force-dynamic';
  * - key: admin API key (required)
  */
 export async function GET(req: NextRequest) {
+  // Rate limiting for admin endpoints
+  const rateLimit = checkRateLimit(req, strictRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('admin.process-backlog.rate_limited');
+    return NextResponse.json(
+      { error: 'Rate limited' },
+      { status: 429, headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() } }
+    );
+  }
+
   const adminKey = process.env.ADMIN_API_KEY;
   const providedKey = req.headers.get('x-admin-key') || req.nextUrl.searchParams.get('key');
   
   if (!adminKey || providedKey !== adminKey) {
+    log.warn('admin.process-backlog.unauthorized');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const limit = parseInt(req.nextUrl.searchParams.get('limit') || '10', 10);
   const dryRun = req.nextUrl.searchParams.get('dryRun') !== 'false';
+
+  if (limit > 100) {
+    return NextResponse.json({ error: 'Limit cannot exceed 100' }, { status: 400 });
+  }
 
   try {
     const db = getDb();
@@ -79,14 +96,25 @@ export async function GET(req: NextRequest) {
           });
           result.eventEmitted = true;
           result.eventIds = event.ids;
+          log.info('admin.process-backlog.interaction_processed', { interactionId: interaction.id });
         } catch (emitErr) {
           result.eventEmitted = false;
           result.error = (emitErr as Error).message;
+          log.error('admin.process-backlog.emit_failed', {
+            interactionId: interaction.id,
+            error: (emitErr as Error).message,
+          });
         }
       }
 
       results.push(result);
     }
+
+    log.info('admin.process-backlog.completed', {
+      processed: results.length,
+      totalUnprocessed: unprocessed.length,
+      dryRun,
+    });
 
     return NextResponse.json({
       dryRun,
@@ -99,8 +127,12 @@ export async function GET(req: NextRequest) {
     }, { status: 200 });
 
   } catch (err) {
+    log.error('admin.process-backlog.error', {
+      error: (err as Error).message,
+      stack: (err as Error).stack,
+    });
     return NextResponse.json(
-      { error: (err as Error).message, stack: (err as Error).stack },
+      { error: (err as Error).message },
       { status: 500 }
     );
   }

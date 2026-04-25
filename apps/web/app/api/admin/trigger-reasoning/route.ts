@@ -1,6 +1,8 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { getDb, sessions, interactions as interactionsTable, eq } from '@nexus/db';
+import { getDb, sessions, interactions as interactionsTable, eq, sql } from '@nexus/db';
 import { inngest } from '@nexus/inngest-fns';
+import { checkRateLimit, strictRateLimiter } from '@/lib/rate-limit';
+import { log } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,10 +15,21 @@ export const dynamic = 'force-dynamic';
  * GET /api/admin/trigger-reasoning?all=true (triggers all open sessions)
  */
 export async function GET(req: NextRequest) {
+  // Rate limiting for admin endpoints
+  const rateLimit = checkRateLimit(req, strictRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('admin.trigger-reasoning.rate_limited');
+    return NextResponse.json(
+      { error: 'Rate limited' },
+      { status: 429, headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() } }
+    );
+  }
+
   const adminKey = process.env.ADMIN_API_KEY?.trim();
   const providedKey = (req.headers.get('x-admin-key') || req.nextUrl.searchParams.get('key') || '').trim();
   
   if (!adminKey || providedKey !== adminKey) {
+    log.warn('admin.trigger-reasoning.unauthorized');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -69,7 +82,7 @@ export async function GET(req: NextRequest) {
         // Update session state to reasoning
         await db
           .update(sessions)
-          .set({ state: 'reasoning', updatedAt: new Date() })
+          .set({ state: 'reasoning', updatedAt: sql`now()` })
           .where(eq(sessions.id, session.id));
 
         // Fire reasoning event
@@ -87,7 +100,12 @@ export async function GET(req: NextRequest) {
           triggered: true,
           eventIds: event.ids,
         });
+        log.info('admin.trigger-reasoning.session_triggered', { sessionId: session.id });
       } catch (err) {
+        log.error('admin.trigger-reasoning.session_failed', {
+          sessionId: session.id,
+          error: (err as Error).message,
+        });
         results.push({
           sessionId: session.id,
           triggered: false,
@@ -96,6 +114,11 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    log.info('admin.trigger-reasoning.completed', {
+      triggered: results.filter(r => r.triggered).length,
+      total: results.length,
+    });
+
     return NextResponse.json({
       triggered: results.filter(r => r.triggered).length,
       total: results.length,
@@ -103,6 +126,10 @@ export async function GET(req: NextRequest) {
     }, { status: 200 });
 
   } catch (err) {
+    log.error('admin.trigger-reasoning.error', {
+      error: (err as Error).message,
+      stack: (err as Error).stack,
+    });
     return NextResponse.json(
       { error: (err as Error).message },
       { status: 500 }

@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import {
   approvalEvents,
@@ -11,6 +11,7 @@ import {
 import { verifyDeviceBearer } from '@/lib/auth/device';
 import { inngest } from '@/lib/inngest';
 import { log } from '@/lib/logger';
+import { checkRateLimit, strictRateLimiter } from '@/lib/rate-limit';
 
 /**
  * POST /api/approvals/:id/action
@@ -19,6 +20,7 @@ import { log } from '@/lib/logger';
  *
  * Mirrors the web server actions but exposed for mobile/Telegram bot.
  * Records an approval_events row tagged with `actor_surface=mobile`.
+ * Rate limited to prevent abuse.
  */
 
 const bodySchema = z.discriminatedUnion('action', [
@@ -54,9 +56,19 @@ async function maybeAdvanceSessionState(sessionId: string): Promise<void> {
 }
 
 export async function POST(
-  req: Request,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // Rate limiting for device endpoint
+  const rateLimit = checkRateLimit(req, strictRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('approval.action.rate_limited');
+    return NextResponse.json(
+      { error: 'rate_limited' },
+      { status: 429, headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() } }
+    );
+  }
+
   const device = await verifyDeviceBearer(req.headers.get('authorization'));
   if (!device) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 

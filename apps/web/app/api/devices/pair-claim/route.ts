@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { consumePairingToken, createDevice, getDb } from '@nexus/db';
 import {
@@ -7,12 +7,14 @@ import {
   hashPairingCode,
 } from '@/lib/auth/device';
 import { log } from '@/lib/logger';
+import { checkRateLimit, strictRateLimiter } from '@/lib/rate-limit';
 
 /**
  * POST /api/devices/pair-claim
  *
  * Auth: none — relies on the unguessable pairing code (32^6 ≈ 1B
  * combos, 10-min TTL, single-use). Standard short-code-pairing pattern.
+ * Rate limited to prevent brute force attacks on pairing codes.
  *
  * Body: { code, name, platform, fcmToken? }
  *
@@ -28,7 +30,16 @@ const bodySchema = z.object({
   fcmToken: z.string().optional(),
 });
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
+  // Rate limiting for pairing endpoint
+  const rateLimit = checkRateLimit(req, strictRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('pair_claim.rate_limited');
+    return NextResponse.json(
+      { error: 'rate_limited' },
+      { status: 429, headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() } }
+    );
+  }
   let body: z.infer<typeof bodySchema>;
   try {
     body = bodySchema.parse(await req.json());

@@ -1,8 +1,9 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { getDb, updateDeviceFcmToken } from '@nexus/db';
 import { verifyDeviceBearer } from '@/lib/auth/device';
 import { log } from '@/lib/logger';
+import { checkRateLimit, strictRateLimiter } from '@/lib/rate-limit';
 
 const bodySchema = z.object({ fcmToken: z.string().min(20) });
 
@@ -12,8 +13,19 @@ const bodySchema = z.object({ fcmToken: z.string().min(20) });
  * Body: { fcmToken }
  *
  * Idempotent: same token → no-op except for last_seen_at refresh.
+ * Rate limited to prevent abuse.
  */
-export async function PUT(req: Request) {
+export async function PUT(req: NextRequest) {
+  // Rate limiting for device endpoint
+  const rateLimit = checkRateLimit(req, strictRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('device.fcm_token.rate_limited');
+    return NextResponse.json(
+      { error: 'rate_limited' },
+      { status: 429, headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() } }
+    );
+  }
+
   const device = await verifyDeviceBearer(req.headers.get('authorization'));
   if (!device) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 

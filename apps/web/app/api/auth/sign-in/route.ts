@@ -1,10 +1,11 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { sendMagicLinkEmail } from '@nexus/services';
 import { isAllowedAdmin } from '@/lib/auth/admin-allowlist';
 import { createMagicLinkToken } from '@/lib/auth/tokens';
 import { serverEnv } from '@/lib/env';
 import { log } from '@/lib/logger';
+import { checkRateLimit, strictRateLimiter } from '@/lib/rate-limit';
 
 /**
  * POST /api/auth/sign-in { email }
@@ -12,15 +13,24 @@ import { log } from '@/lib/logger';
  * - Always responds 200 OK regardless of whether the email is on the
  *   allowlist (don't leak who has access).
  * - Only sends an email if the address IS on the allowlist.
- * - Rate limit: not implemented in Phase 5; relies on admin email being
- *   secret. Phase 11 wires Upstash sliding-window per-IP.
+ * - Rate limited to prevent abuse.
  */
 
 const bodySchema = z.object({
   email: z.string().email().toLowerCase(),
 });
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
+  // Rate limiting for auth endpoint
+  const rateLimit = checkRateLimit(req, strictRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('auth.sign_in.rate_limited');
+    return NextResponse.json(
+      { error: 'rate_limited' },
+      { status: 429, headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() } }
+    );
+  }
+
   try {
     let body: { email: string };
     try {
@@ -63,6 +73,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   } catch (err) {
     log.error('auth.sign_in.unexpected_error', { error: (err as Error).message, stack: (err as Error).stack });
-    return NextResponse.json({ error: 'internal_error', message: (err as Error).message }, { status: 500 });
+    return NextResponse.json({ error: 'internal_error' }, { status: 500 });
   }
 }

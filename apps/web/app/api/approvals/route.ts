@@ -1,14 +1,27 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { verifyDeviceBearer } from '@/lib/auth/device';
 import { loadAwaitingApprovals } from '@/lib/queries/approvals';
+import { checkRateLimit, strictRateLimiter } from '@/lib/rate-limit';
+import { log } from '@/lib/logger';
 
 /**
  * GET /api/approvals
  *
  * Auth: device bearer.
  * Returns the awaiting-approval cards in a mobile-friendly shape.
+ * Rate limited to prevent abuse.
  */
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
+  // Rate limiting for device endpoint
+  const rateLimit = checkRateLimit(req, strictRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('approvals.rate_limited');
+    return NextResponse.json(
+      { error: 'rate_limited' },
+      { status: 429, headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() } }
+    );
+  }
+
   const device = await verifyDeviceBearer(req.headers.get('authorization'));
   if (!device) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 

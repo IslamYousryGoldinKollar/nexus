@@ -10,6 +10,8 @@ import {
   sql,
 } from '@nexus/db';
 import { reasonOverSession, GPT_4O_MINI } from '@nexus/services';
+import { checkRateLimit, strictRateLimiter } from '@/lib/rate-limit';
+import { log } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,10 +25,21 @@ export const maxDuration = 300;
  * GET /api/admin/direct-reasoning?all=true
  */
 export async function GET(req: NextRequest) {
+  // Rate limiting for admin endpoints
+  const rateLimit = checkRateLimit(req, strictRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('admin.direct-reasoning.rate_limited');
+    return NextResponse.json(
+      { error: 'Rate limited' },
+      { status: 429, headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() } }
+    );
+  }
+
   const adminKey = process.env.ADMIN_API_KEY?.trim();
   const providedKey = (req.headers.get('x-admin-key') || req.nextUrl.searchParams.get('key') || '').trim();
   
   if (!adminKey || providedKey !== adminKey) {
+    log.warn('admin.direct-reasoning.unauthorized');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -35,6 +48,7 @@ export async function GET(req: NextRequest) {
 
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
+    log.error('admin.direct-reasoning.no_api_key');
     return NextResponse.json({ error: 'OPENAI_API_KEY not set' }, { status: 500 });
   }
 
@@ -50,7 +64,8 @@ export async function GET(req: NextRequest) {
       const openOrReasoning = await db
         .select({ id: sessionsTable.id })
         .from(sessionsTable)
-        .where(sql`state IN ('open', 'reasoning')`);
+        .where(sql`state IN ('open', 'reasoning')`)
+        .limit(10); // Limit to prevent excessive processing
       targetSessionIds = openOrReasoning.map(s => s.id);
     } else {
       return NextResponse.json({ 
@@ -68,6 +83,7 @@ export async function GET(req: NextRequest) {
         const ctx = await loadSessionContext(db, sid);
         if (!ctx) {
           sessionResult['status'] = 'not_found';
+          log.warn('admin.direct-reasoning.session_not_found', { sessionId: sid });
           results.push(sessionResult);
           continue;
         }
@@ -78,6 +94,7 @@ export async function GET(req: NextRequest) {
             .update(sessionsTable)
             .set({ state: 'closed', closedAt: new Date(), updatedAt: sql`now()` })
             .where(eq(sessionsTable.id, sid));
+          log.info('admin.direct-reasoning.session_empty', { sessionId: sid });
           results.push(sessionResult);
           continue;
         }
@@ -187,13 +204,23 @@ export async function GET(req: NextRequest) {
         sessionResult['costUsd'] = result.costUsd;
         sessionResult['latencyMs'] = result.latencyMs;
         sessionResult['tasks'] = tasks.map(t => ({ id: t.id, title: result.output.proposedTasks.find(pt => pt.title)?.title }));
+        log.info('admin.direct-reasoning.session_completed', { sessionId: sid, taskCount: tasks.length });
       } catch (err) {
         sessionResult['status'] = 'error';
         sessionResult['error'] = (err as Error).message;
+        log.error('admin.direct-reasoning.session_failed', {
+          sessionId: sid,
+          error: (err as Error).message,
+        });
       }
 
       results.push(sessionResult);
     }
+
+    log.info('admin.direct-reasoning.completed', {
+      processed: results.length,
+      successful: results.filter(r => r['status'] === 'completed').length,
+    });
 
     return NextResponse.json({
       processed: results.length,
@@ -202,8 +229,12 @@ export async function GET(req: NextRequest) {
     }, { status: 200 });
 
   } catch (err) {
+    log.error('admin.direct-reasoning.error', {
+      error: (err as Error).message,
+      stack: (err as Error).stack,
+    });
     return NextResponse.json(
-      { error: (err as Error).message, stack: (err as Error).stack },
+      { error: (err as Error).message },
       { status: 500 }
     );
   }

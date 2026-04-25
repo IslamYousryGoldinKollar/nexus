@@ -1,6 +1,8 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { getDb, interactions as interactionsTable, eq } from '@nexus/db';
 import { inngest } from '@nexus/inngest-fns';
+import { checkRateLimit, strictRateLimiter } from '@/lib/rate-limit';
+import { log } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,11 +19,22 @@ export const dynamic = 'force-dynamic';
  * 4. Optionally emits the Inngest event
  */
 export async function GET(req: NextRequest) {
+  // Rate limiting for admin endpoints
+  const rateLimit = checkRateLimit(req, strictRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('admin.replay-interaction.rate_limited');
+    return NextResponse.json(
+      { error: 'Rate limited' },
+      { status: 429, headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() } }
+    );
+  }
+
   // Simple auth check - require ADMIN_API_KEY
   const adminKey = process.env.ADMIN_API_KEY;
   const providedKey = req.headers.get('x-admin-key') || req.nextUrl.searchParams.get('key');
   
   if (!adminKey || providedKey !== adminKey) {
+    log.warn('admin.replay-interaction.unauthorized');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -76,12 +89,18 @@ export async function GET(req: NextRequest) {
         },
       });
       result.eventEmitted = event;
+      log.info('admin.replay-interaction.event_emitted', { interactionId });
     }
 
     return NextResponse.json(result, { status: 200 });
   } catch (err) {
+    log.error('admin.replay-interaction.error', {
+      err: (err as Error).message,
+      stack: (err as Error).stack,
+      interactionId,
+    });
     return NextResponse.json(
-      { error: (err as Error).message, stack: (err as Error).stack },
+      { error: (err as Error).message },
       { status: 500 }
     );
   }
