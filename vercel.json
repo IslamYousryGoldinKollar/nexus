@@ -3,5 +3,15 @@
   "framework": "nextjs",
   "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
   "buildCommand": "cd ../.. && pnpm --filter=@nexus/web... build",
-  "outputDirectory": ".next"
+  "outputDirectory": ".next",
+  "crons": [
+    {
+      "path": "/api/cron/auto-reason",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/sync-inngest",
+      "schedule": "*/30 * * * *"
+    }
+  ]
 }
