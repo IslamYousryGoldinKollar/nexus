@@ -31,7 +31,14 @@ class NexusApi(
 
     private val client: HttpClient = HttpClient(OkHttp) {
         install(ContentNegotiation) {
-            json(Json { ignoreUnknownKeys = true; explicitNulls = false })
+            // classDiscriminator = "action" matches the server's z.discriminatedUnion('action', …)
+            // schema in apps/web/app/api/approvals/[id]/action/route.ts. Without this the
+            // default 'type' discriminator is sent and the server rejects with invalid_payload.
+            json(Json {
+                ignoreUnknownKeys = true
+                explicitNulls = false
+                classDiscriminator = "action"
+            })
         }
         install(HttpTimeout) {
             requestTimeoutMillis = 15_000
@@ -118,12 +125,8 @@ sealed class ApprovalAction {
     object Approve : ApprovalAction()
 
     @Serializable @kotlinx.serialization.SerialName("reject")
-    data class Reject(val reason: String? = null) : ApprovalAction() {
-        val action: String = "reject"
-    }
+    data class Reject(val reason: String? = null) : ApprovalAction()
 
     @Serializable @kotlinx.serialization.SerialName("edit")
-    data class Edit(val title: String, val description: String) : ApprovalAction() {
-        val action: String = "edit"
-    }
+    data class Edit(val title: String, val description: String) : ApprovalAction()
 }
