@@ -7,70 +7,68 @@ import com.goldinkollar.nexus.data.database.SessionEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
+/**
+ * Offline cache for the approvals queue. Reads come from Room; writes
+ * are populated by `refreshSessions()` after a successful API call.
+ *
+ * The server's `SessionCard` payload (see NexusApi.kt) currently exposes
+ * only sessionId / contactName / lastActivityAt / tasks. Until the API
+ * adds richer fields we synthesize the rest with safe defaults so the
+ * Room schema stays stable.
+ */
 class SessionRepository(context: Context) {
     private val sessionDao: SessionDao = DatabaseProvider.getDatabase(context).sessionDao()
-    private val api = NexusApi("https://nexus.theoffsight.com") { SessionStore.shared(context).apiKey }
+    private val store = SessionStore.shared(context)
+    private val api = NexusApi(store.baseUrl) { store.apiKey }
 
-    fun getAllSessions(): Flow<List<SessionCard>> {
+    fun getAllSessions(): Flow<List<CachedSession>> {
         return sessionDao.getAllSessions().map { entities ->
-            entities.map { entity ->
-                SessionCard(
-                    sessionId = entity.sessionId,
-                    contactName = entity.contactName,
-                    state = entity.state,
-                    openedAt = entity.openedAt,
-                    lastActivityAt = entity.lastActivityAt,
-                    tasks = emptyList() // Tasks loaded separately
-                )
-            }
+            entities.map { it.toCached() }
         }
     }
 
-    fun getSessionById(sessionId: String): Flow<SessionCard?> {
-        return sessionDao.getSessionById(sessionId).map { entity ->
-            entity?.let {
-                SessionCard(
-                    sessionId = it.sessionId,
-                    contactName = it.contactName,
-                    state = it.state,
-                    openedAt = it.openedAt,
-                    lastActivityAt = it.lastActivityAt,
-                    tasks = emptyList()
-                )
-            }
-        }
+    fun getSessionById(sessionId: String): Flow<CachedSession?> {
+        return sessionDao.getSessionById(sessionId).map { entity -> entity?.toCached() }
     }
 
     suspend fun refreshSessions() {
         try {
             val response = api.getApprovals()
+            val now = response.fetchedAt
             val entities = response.items.map { session ->
                 SessionEntity(
                     sessionId = session.sessionId,
                     contactName = session.contactName,
-                    state = session.state,
-                    openedAt = session.openedAt,
+                    state = "awaiting_approval",
+                    openedAt = session.lastActivityAt,
                     lastActivityAt = session.lastActivityAt,
-                    syncedAt = null,
-                    updatedAt = session.updatedAt
+                    syncedAt = now,
+                    updatedAt = session.lastActivityAt,
                 )
             }
             sessionDao.insertSessions(entities)
-        } catch (e: Exception) {
-            // Handle network error - offline mode will use cached data
+        } catch (_: Exception) {
+            // Network error — UI falls back to cached data.
         }
     }
-
-    suspend fun saveSession(session: SessionCard) {
-        val entity = SessionEntity(
-            sessionId = session.sessionId,
-            contactName = session.contactName,
-            state = session.state,
-            openedAt = session.openedAt,
-            lastActivityAt = session.lastActivityAt,
-            syncedAt = null,
-            updatedAt = session.updatedAt
-        )
-        sessionDao.insertSession(entity)
-    }
 }
+
+/** UI-facing snapshot of a cached session row. */
+data class CachedSession(
+    val sessionId: String,
+    val contactName: String?,
+    val state: String,
+    val openedAt: String,
+    val lastActivityAt: String,
+    val updatedAt: String,
+)
+
+private fun SessionEntity.toCached(): CachedSession =
+    CachedSession(
+        sessionId = sessionId,
+        contactName = contactName,
+        state = state,
+        openedAt = openedAt,
+        lastActivityAt = lastActivityAt,
+        updatedAt = updatedAt,
+    )
