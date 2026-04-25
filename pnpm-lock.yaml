@@ -109,8 +109,8 @@ importers:
         specifier: ^2.1.1
         version: 2.1.1
       inngest:
-        specifier: ^3.27.5
-        version: 3.52.7(@opentelemetry/core@2.7.0(@opentelemetry/api@1.9.1))(next@15.5.15(@opentelemetry/api@1.9.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@5.9.3)(zod@3.25.76)
+        specifier: ^3.54.0
+        version: 3.54.0(@opentelemetry/core@2.7.0(@opentelemetry/api@1.9.1))(next@15.5.15(@opentelemetry/api@1.9.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@5.9.3)(zod@3.25.76)
       jose:
         specifier: ^5.9.6
         version: 5.10.0
@@ -219,8 +219,8 @@ importers:
         specifier: workspace:*
         version: link:../shared
       inngest:
-        specifier: ^3.27.5
-        version: 3.52.7(@opentelemetry/core@2.7.0(@opentelemetry/api@1.9.1))(next@15.5.15(@opentelemetry/api@1.9.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@5.9.3)(zod@3.25.76)
+        specifier: ^3.54.0
+        version: 3.54.0(@opentelemetry/core@2.7.0(@opentelemetry/api@1.9.1))(next@15.5.15(@opentelemetry/api@1.9.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@5.9.3)(zod@3.25.76)
       zod:
         specifier: ^3.23.8
         version: 3.25.76
@@ -3801,8 +3801,8 @@ packages:
   inherits@2.0.4:
     resolution: {integrity: sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==}
 
-  inngest@3.52.7:
-    resolution: {integrity: sha512-Bj4LttRrNUfVz745MVxQio34QwHzwG7dHiAI6DmRIZqfRjQ6tdV4mg70xzbRmwsaXgN+iboa+SXP6ILkziUf4g==}
+  inngest@3.54.0:
+    resolution: {integrity: sha512-EBMgyRZt9rWUmc9GUdxznbO1CmyXKZi2CZPNxNTyZJyjZMXFhPiftq/lTKjhYXD9/WlqaVFVB2K7o8vDAkGs6w==}
     engines: {node: '>=20'}
     peerDependencies:
       '@sveltejs/kit': '>=1.27.3'
@@ -9088,7 +9088,7 @@ snapshots:
 
   inherits@2.0.4: {}
 
-  inngest@3.52.7(@opentelemetry/core@2.7.0(@opentelemetry/api@1.9.1))(next@15.5.15(@opentelemetry/api@1.9.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@5.9.3)(zod@3.25.76):
+  inngest@3.54.0(@opentelemetry/core@2.7.0(@opentelemetry/api@1.9.1))(next@15.5.15(@opentelemetry/api@1.9.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@5.9.3)(zod@3.25.76):
     dependencies:
       '@bufbuild/protobuf': 2.11.0
       '@inngest/ai': 0.1.7

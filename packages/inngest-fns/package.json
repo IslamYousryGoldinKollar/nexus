@@ -20,7 +20,7 @@
     "@nexus/db": "workspace:*",
     "@nexus/services": "workspace:*",
     "@nexus/shared": "workspace:*",
-    "inngest": "^3.27.5",
+    "inngest": "^3.54.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
