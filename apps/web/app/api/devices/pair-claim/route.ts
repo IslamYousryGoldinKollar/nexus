@@ -41,7 +41,6 @@ export async function POST(req: NextRequest) {
         { status: 429, headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() } },
       );
     }
-    let body: z.infer<typeof bodySchema>;
     let raw: unknown;
     try {
       raw = await req.json();
@@ -71,7 +70,7 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    body = parsed.data;
+    const body = parsed.data;
 
     const db = getDb();
     const codeHash = await hashPairingCode(body.code);
