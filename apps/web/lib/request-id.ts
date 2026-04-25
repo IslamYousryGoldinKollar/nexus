@@ -1,15 +1,22 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { randomBytes } from 'crypto';
 
 /**
  * Generate a unique request ID for tracing requests through the system.
  * Format: <timestamp>-<random>
  *
  * Used for distributed tracing and debugging across API calls, webhooks, and background jobs.
+ *
+ * Uses the Web Crypto API (`crypto.getRandomValues`) so this module is
+ * importable from edge-runtime middleware. node:crypto cannot be loaded
+ * in Edge runtime; Web Crypto is available globally in both Edge and
+ * Node 18+.
  */
 export function generateRequestId(): string {
   const timestamp = Date.now().toString(36);
-  const random = randomBytes(8).toString('hex');
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  let random = '';
+  for (const b of bytes) random += b.toString(16).padStart(2, '0');
   return `${timestamp}-${random}`;
 }
 
