@@ -73,6 +73,9 @@ fun ApprovalsScreen() {
         }
         Spacer(Modifier.height(12.dp))
 
+        RecordingControl()
+        Spacer(Modifier.height(12.dp))
+
         if (loading) {
             CircularProgressIndicator()
         } else if (error != null) {
