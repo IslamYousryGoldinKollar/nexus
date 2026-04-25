@@ -81,3 +81,103 @@ jobs:
           path: apps/android/app/build/outputs/apk/debug/nexus-*.apk
           retention-days: 30
           if-no-files-found: error
+
+  smoke-test:
+    name: Launch APK on emulator + capture logcat
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # KVM acceleration needed by the Android emulator action.
+    # Allow this job to fail without blocking the workflow status —
+    # the APK is still useful even if the smoke test infra is flaky.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download APK from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: nexus-debug-apk
+          path: ./apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: AVD cache
+        uses: actions/cache@v4
+        id: avd-cache
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-api35-x86_64-v1
+
+      - name: Create AVD + warm up snapshot
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot-save -noaudio -no-boot-anim
+          disable-animations: true
+          script: echo "AVD warmed"
+
+      - name: Install APK + launch MainActivity + capture logcat
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          disable-animations: true
+          script: |
+            set -e
+            APK=$(ls apk/nexus-*.apk | head -1)
+            echo "::group::Installing $APK"
+            adb install -r "$APK"
+            echo "::endgroup::"
+
+            # Clear logcat then start the launcher activity.
+            adb logcat -c
+            echo "::group::Launching MainActivity"
+            adb shell am start -W -n com.goldinkollar.nexus.debug/com.goldinkollar.nexus.MainActivity
+            echo "::endgroup::"
+
+            # Give the app 8 seconds to either render or crash.
+            sleep 8
+
+            # Capture everything tagged with our app's package or showing
+            # AndroidRuntime crashes — and any of our own log tags.
+            echo "::group::logcat (last 8s)"
+            adb logcat -d -t 1000 \
+              AndroidRuntime:E \
+              SentryInitializer:* \
+              NexusApp:* \
+              MainActivity:* \
+              CrashRecorder:* \
+              SessionStore:* \
+              "*:F" \
+              | head -300
+            echo "::endgroup::"
+
+            # Did the process survive?
+            PID=$(adb shell pidof com.goldinkollar.nexus.debug || echo "")
+            if [ -z "$PID" ]; then
+              echo "::error::Nexus process died within 8 seconds"
+              # Re-dump full logcat as the error context
+              adb logcat -d -t 500 | tail -200
+              exit 1
+            fi
+            echo "::notice::Nexus is alive after 8 seconds (pid=$PID)"
+
+            # Bonus: pull /data/data/com.goldinkollar.nexus.debug/files/last-crash.txt
+            # if it exists. The CrashRecorder writes there.
+            adb shell run-as com.goldinkollar.nexus.debug \
+              cat /data/data/com.goldinkollar.nexus.debug/files/last-crash.txt 2>/dev/null \
+              || echo "(no last-crash.txt)"
