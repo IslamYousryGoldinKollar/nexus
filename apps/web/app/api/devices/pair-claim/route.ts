@@ -24,7 +24,10 @@ const bodySchema = z.object({
   name: z.string().min(1).max(80),
   // Schema enum is android|ios|web; chrome_extension uses 'web' for now.
   platform: z.enum(['android', 'ios', 'web']),
-  fcmToken: z.string().optional(),
+  // `nullable()` so explicit `{"fcmToken": null}` from the Android client
+  // (kotlinx serializer doesn't always honor explicitNulls=false on data
+  // class properties) doesn't trip the schema.
+  fcmToken: z.string().nullable().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -39,11 +42,36 @@ export async function POST(req: NextRequest) {
       );
     }
     let body: z.infer<typeof bodySchema>;
+    let raw: unknown;
     try {
-      body = bodySchema.parse(await req.json());
-    } catch {
-      return NextResponse.json({ error: 'invalid_payload' }, { status: 400 });
+      raw = await req.json();
+    } catch (err) {
+      log.warn('pair_claim.body_not_json', { err: (err as Error).message });
+      return NextResponse.json({ error: 'invalid_payload', reason: 'body_not_json' }, { status: 400 });
     }
+    const parsed = bodySchema.safeParse(raw);
+    if (!parsed.success) {
+      log.warn('pair_claim.schema_mismatch', {
+        issues: parsed.error.issues.slice(0, 6).map((i) => ({
+          path: i.path.join('.'),
+          code: i.code,
+          message: i.message,
+        })),
+        // Surface the actual keys we received (not the values — could be sensitive).
+        received_keys: raw && typeof raw === 'object' ? Object.keys(raw as object) : null,
+      });
+      return NextResponse.json(
+        {
+          error: 'invalid_payload',
+          issues: parsed.error.issues.map((i) => ({
+            path: i.path.join('.'),
+            message: i.message,
+          })),
+        },
+        { status: 400 },
+      );
+    }
+    body = parsed.data;
 
     const db = getDb();
     const codeHash = await hashPairingCode(body.code);
