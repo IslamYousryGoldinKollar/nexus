@@ -1,8 +1,10 @@
 import { jwtVerify } from 'jose';
 import { NextResponse, type NextRequest } from 'next/server';
+import { applySecurityHeaders } from '@/lib/security-headers';
 
 /**
- * Edge middleware: gate (admin) routes behind a valid session cookie.
+ * Edge middleware: gate (admin) routes behind a valid session cookie,
+ * and apply baseline security headers to every response.
  *
  * Why a separate verify here instead of importing `readSession`?
  * Middleware runs in the Edge runtime and can't import node:crypto
@@ -49,15 +51,15 @@ async function isValidSession(jwt: string | undefined): Promise<boolean> {
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  if (isPublic(pathname)) return NextResponse.next();
+  if (isPublic(pathname)) return applySecurityHeaders(NextResponse.next());
 
   const jwt = req.cookies.get(SESSION_COOKIE_NAME)?.value;
   const ok = await isValidSession(jwt);
-  if (ok) return NextResponse.next();
+  if (ok) return applySecurityHeaders(NextResponse.next());
 
   const loginUrl = new URL('/login', req.url);
   loginUrl.searchParams.set('next', pathname);
-  return NextResponse.redirect(loginUrl);
+  return applySecurityHeaders(NextResponse.redirect(loginUrl));
 }
 
 export const config = {
