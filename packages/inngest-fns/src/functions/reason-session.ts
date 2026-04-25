@@ -88,7 +88,7 @@ export const reasonSession = inngest.createFunction(
     const budget = Number(process.env.OPENAI_MONTHLY_BUDGET_USD ?? '200') || 200;
     const over = await step.run('check-budget', async () => {
       const db = getDb();
-      return isOverMonthlyBudget(db, 'anthropic', budget);
+      return isOverMonthlyBudget(db, 'openai', budget);
     });
     if (over.over || !apiKey) {
       logger.error('reason.budget_exceeded_or_no_key', {
