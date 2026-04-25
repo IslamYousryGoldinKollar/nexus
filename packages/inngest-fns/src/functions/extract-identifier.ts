@@ -33,11 +33,15 @@ export function extractIdentifier(
       //     sender's real E.164 address when WA chose to reveal it, plus
       //     `raw.pushName` (human display name).
       //
+      // For group messages, Meta Cloud webhook provides `context.from` which
+      // contains the actual sender's phone number. We prioritize this for groups.
+      //
       // Resolution order:
-      //   1. `raw.key.senderPn`         ← best: verified phone
-      //   2. `raw.key.remoteJid` unless @lid/@g.us/@broadcast
-      //   3. `from`                    unless @lid/@g.us/@broadcast
-      //   4. Fallback: use the raw `@lid` digits as a stable pseudonymous
+      //   1. `raw.key.senderPn`         ← best: verified phone (Baileys)
+      //   2. `context.from`            ← actual sender in group messages (Meta Cloud)
+      //   3. `raw.key.remoteJid` unless @lid/@g.us/@broadcast
+      //   4. `from`                    unless @lid/@g.us/@broadcast
+      //   5. Fallback: use the raw `@lid` digits as a stable pseudonymous
       //      identifier so we still get a contact + session + transcription.
       const raw = (p.raw as Record<string, unknown> | undefined) ?? null;
       const key = (raw?.key as Record<string, unknown> | undefined) ?? null;
@@ -46,6 +50,10 @@ export function extractIdentifier(
       const remoteJid = typeof key?.remoteJid === 'string' ? key.remoteJid : null;
       const pushName = typeof raw?.pushName === 'string' ? raw.pushName : null;
       const fromField = typeof p.from === 'string' ? p.from : null;
+      
+      // For Meta Cloud webhook, check context.from for group messages
+      const context = (p.context as Record<string, unknown> | undefined) ?? null;
+      const contextFrom = typeof context?.from === 'string' ? context.from : null;
 
       // Strip `@<suffix>` and `:<device>` (e.g. "201110202550:25@s.whatsapp.net").
       const stripJid = (s: string | null): string | null => {
@@ -55,6 +63,17 @@ export function extractIdentifier(
       };
       const isPhoneAddr = (s: string | null): s is string =>
         !!s && !s.includes('@lid') && !s.includes('@g.us') && !s.includes('@broadcast');
+
+      // Check if this is a group message
+      const isGroup = (fromField && fromField.includes('@g.us')) || (remoteJid && remoteJid.includes('@g.us'));
+
+      // For group messages, prioritize context.from (actual sender)
+      if (isGroup && contextFrom) {
+        const wa = normalizeWaId(stripJid(contextFrom));
+        if (wa) {
+          return { kind: 'whatsapp_wa_id', value: wa, displayHint: pushName ?? contextFrom };
+        }
+      }
 
       for (const cand of [senderPn, participantPn, remoteJid, fromField].filter(isPhoneAddr)) {
         const wa = normalizeWaId(stripJid(cand));
