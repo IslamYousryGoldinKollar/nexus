@@ -138,7 +138,15 @@ jobs:
           disable-animations: true
           script: |
             set -e
-            APK=$(ls apk/nexus-*.apk | head -1)
+            # The upload-artifact step preserves the full source path,
+            # so the APK lives somewhere under apk/. Use find to locate
+            # it regardless of nesting.
+            APK=$(find apk -name 'nexus-*.apk' -type f | head -1)
+            if [ -z "$APK" ]; then
+              echo "::error::No APK found under apk/. Tree:"
+              find apk -type f
+              exit 1
+            fi
             echo "::group::Installing $APK"
             adb install -r "$APK"
             echo "::endgroup::"
