@@ -15,7 +15,7 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.Headers
+import io.ktor.http.headersOf
 import io.ktor.http.ContentDisposition
 import io.ktor.http.ContentType
 import java.io.File
@@ -59,16 +59,15 @@ class UploadRecordingWorker(
                             append(
                                 key = "audio",
                                 value = file.readBytes(),
-                                headers = Headers.build {
-                                    append(HttpHeaders.ContentType, file.mimeType())
-                                    append(
-                                        HttpHeaders.ContentDisposition,
+                                headers = headersOf(
+                                    HttpHeaders.ContentType to listOf(file.mimeType().toString()),
+                                    HttpHeaders.ContentDisposition to listOf(
                                         ContentDisposition.File
                                             .withParameter("name", "audio")
                                             .withParameter("filename", file.name)
                                             .toString(),
-                                    )
-                                },
+                                    ),
+                                ),
                             )
                             append("metadata", buildMetadata(file))
                         },
