@@ -1,6 +1,8 @@
 package com.goldinkollar.nexus.data
 
 import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.channels.awaitClose
@@ -8,26 +10,48 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 
 /**
- * Encrypted key/value store for the device API key + paired user id.
+ * Key/value store for the device API key + paired user id.
  *
- * Backed by androidx.security `EncryptedSharedPreferences` with a master
- * key in the Android keystore. AES-256-GCM-SIV under the hood.
+ * Tries `EncryptedSharedPreferences` first (AES-256 with a keystore
+ * master key) and falls back to plain `SharedPreferences` if encryption
+ * fails to initialize. This fallback exists because
+ * `androidx.security:security-crypto:1.1.0-alpha06` is known to throw
+ * `KeyStoreException` / `InvalidProtocolBufferException` on certain
+ * Android 14+ devices and Samsung One UI builds — the v1 Tink-based
+ * implementation is fragile.
  *
- * `apiKeyFlow` emits on writes so MainActivity flips screens immediately
- * after a successful pair-claim.
+ * Trade-off: when fallback fires, the API key is stored unencrypted in
+ * the app's private prefs file. That file is still process-private
+ * (sandboxed by the Android per-app filesystem isolation), so the only
+ * realistic exposure is a rooted device. Acceptable for v1; revisit if
+ * we move to consumer scale.
+ *
+ * `apiKeyFlow` emits on writes so MainActivity flips screens
+ * immediately after a successful pair-claim.
  */
 class SessionStore private constructor(context: Context) {
 
-    private val prefs by lazy {
-        EncryptedSharedPreferences.create(
-            context.applicationContext,
-            "nexus.session",
-            MasterKey.Builder(context.applicationContext)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build(),
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
+    private val appContext = context.applicationContext
+
+    private val prefs: SharedPreferences by lazy {
+        try {
+            EncryptedSharedPreferences.create(
+                appContext,
+                ENCRYPTED_PREFS_NAME,
+                MasterKey.Builder(appContext)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build(),
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+            )
+        } catch (t: Throwable) {
+            Log.w(
+                "SessionStore",
+                "EncryptedSharedPreferences failed; falling back to plain prefs",
+                t,
+            )
+            appContext.getSharedPreferences(FALLBACK_PREFS_NAME, Context.MODE_PRIVATE)
+        }
     }
 
     val apiKey: String?
@@ -76,6 +100,8 @@ class SessionStore private constructor(context: Context) {
         // Vercel canonical alias. nexus.theoffsight.com isn't in DNS yet;
         // switch to it once the CNAME is added at the registrar.
         private const val DEFAULT_BASE_URL = "https://nexus-beta-coral.vercel.app"
+        private const val ENCRYPTED_PREFS_NAME = "nexus.session"
+        private const val FALLBACK_PREFS_NAME = "nexus.session.fallback"
 
         @Volatile private var instance: SessionStore? = null
 
