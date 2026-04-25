@@ -4,6 +4,7 @@ import { ingestBaileysEnvelope } from '@/lib/channels/whatsapp/baileys-ingest';
 import { baileysEnvelopeSchema } from '@/lib/channels/whatsapp/baileys-schema';
 import { log } from '@/lib/logger';
 import { parseJsonFromBytes, readRawBody } from '@/lib/raw-body';
+import { checkRateLimit, webhookRateLimiter } from '@/lib/rate-limit';
 import { ack, signatureFailed } from '@/lib/webhook-response';
 
 export const runtime = 'nodejs';
@@ -26,6 +27,15 @@ export const dynamic = 'force-dynamic';
  */
 
 export async function POST(req: NextRequest) {
+  const rateLimit = checkRateLimit(req, webhookRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('wa_baileys.webhook.rate_limited');
+    return new NextResponse('rate_limited', {
+      status: 429,
+      headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() },
+    });
+  }
+
   const secret = process.env.WA_BRIDGE_HMAC_SECRET;
   if (!secret) {
     log.error('wa_baileys.webhook.no_secret');

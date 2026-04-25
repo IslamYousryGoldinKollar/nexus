@@ -1,4 +1,4 @@
-import { type NextRequest } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import {
   gmailNotificationSchema,
   pubsubPushSchema,
@@ -8,6 +8,7 @@ import { serverEnv } from '@/lib/env';
 import { inngest } from '@/lib/inngest';
 import { log } from '@/lib/logger';
 import { parseJsonFromBytes, readRawBody } from '@/lib/raw-body';
+import { checkRateLimit, webhookRateLimiter } from '@/lib/rate-limit';
 import { ack, signatureFailed } from '@/lib/webhook-response';
 
 export const runtime = 'nodejs';
@@ -22,6 +23,15 @@ export const dynamic = 'force-dynamic';
  *   - Emit Inngest event to fetch email content and create interactions.
  */
 export async function POST(req: NextRequest) {
+  const rateLimit = checkRateLimit(req, webhookRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('gmail.webhook.rate_limited');
+    return new NextResponse('rate_limited', {
+      status: 429,
+      headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() },
+    });
+  }
+
   const authz = req.headers.get('authorization') ?? '';
   const token = authz.toLowerCase().startsWith('bearer ')
     ? authz.slice(7).trim()

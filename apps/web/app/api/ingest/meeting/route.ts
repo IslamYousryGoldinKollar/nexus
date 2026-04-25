@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { log } from '@/lib/logger';
+import { checkRateLimit, webhookRateLimiter } from '@/lib/rate-limit';
 import { ingestMeetingRecording } from '@/lib/channels/meeting/ingest';
 
 export const runtime = 'nodejs';
@@ -38,6 +39,15 @@ function timingSafeHexEq(a: string, b: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
+  const rateLimit = checkRateLimit(req, webhookRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('meeting.webhook.rate_limited');
+    return new NextResponse('rate_limited', {
+      status: 429,
+      headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() },
+    });
+  }
+
   const secret = process.env.WA_BRIDGE_HMAC_SECRET;
   if (!secret) {
     log.error('meeting.webhook.no_secret');

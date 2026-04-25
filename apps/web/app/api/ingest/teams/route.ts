@@ -1,9 +1,10 @@
-import { type NextRequest } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { safeStringEqual } from '@nexus/shared';
 import { ingestTeamsMessage } from '@/lib/channels/teams/ingest';
 import { teamsIngestSchema } from '@/lib/channels/teams/schema';
 import { serverEnv } from '@/lib/env';
 import { log } from '@/lib/logger';
+import { checkRateLimit, webhookRateLimiter } from '@/lib/rate-limit';
 import { ack, signatureFailed, badRequest } from '@/lib/webhook-response';
 
 export const runtime = 'nodejs';
@@ -19,6 +20,15 @@ export const dynamic = 'force-dynamic';
  * per request. De-duplication happens server-side via upsertInteraction.
  */
 export async function POST(req: NextRequest) {
+  const rateLimit = checkRateLimit(req, webhookRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('teams.webhook.rate_limited');
+    return new NextResponse('rate_limited', {
+      status: 429,
+      headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() },
+    });
+  }
+
   const expected = serverEnv.TEAMS_INGEST_API_KEY;
   if (!expected) {
     log.error('teams.no_key_configured', {});

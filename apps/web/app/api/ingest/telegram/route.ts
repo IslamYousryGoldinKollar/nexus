@@ -1,4 +1,4 @@
-import { type NextRequest } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { safeStringEqual } from '@nexus/shared';
 import { handleTelegramCallback } from '@/lib/channels/telegram/approval';
 import { handleTelegramCommand } from '@/lib/channels/telegram/commands';
@@ -7,6 +7,7 @@ import { telegramUpdate } from '@/lib/channels/telegram/schema';
 import { serverEnv } from '@/lib/env';
 import { log } from '@/lib/logger';
 import { parseJsonFromBytes, readRawBody } from '@/lib/raw-body';
+import { checkRateLimit, webhookRateLimiter } from '@/lib/rate-limit';
 import { ack, signatureFailed } from '@/lib/webhook-response';
 
 export const runtime = 'nodejs';
@@ -24,6 +25,15 @@ export const dynamic = 'force-dynamic';
  * Phase 9 adds the approval-callback_query handlers.
  */
 export async function POST(req: NextRequest) {
+  const rateLimit = checkRateLimit(req, webhookRateLimiter);
+  if (!rateLimit.allowed) {
+    log.warn('telegram.webhook.rate_limited');
+    return new NextResponse('rate_limited', {
+      status: 429,
+      headers: { 'X-RateLimit-Remaining': rateLimit.remaining.toString() },
+    });
+  }
+
   const expected = serverEnv.TELEGRAM_WEBHOOK_SECRET;
   if (!expected) {
     log.error('telegram.webhook.no_secret_configured');
