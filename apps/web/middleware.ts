@@ -27,6 +27,16 @@ const PUBLIC_PATHS = [
   '/api/ingest',
   '/api/admin',
   '/api/cron',
+  // Device pairing + per-device endpoints. The Android app calls these
+  // BEFORE it has a session cookie:
+  //   - /api/devices/pair-claim — code-based, no auth needed
+  //   - /api/devices/me/*       — Authorization: Bearer <device-key>
+  //     (each route enforces its own device-bearer check internally)
+  // /api/devices/pair-init still requires the admin session and verifies
+  // it inside the handler, so blanketing /api/devices public is safe.
+  '/api/devices',
+  '/api/approvals',
+  '/api/contacts',
   '/_next',
   '/favicon.ico',
 ];
