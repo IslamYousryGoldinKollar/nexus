@@ -1,5 +1,6 @@
 import { jwtVerify } from 'jose';
 import { NextResponse, type NextRequest } from 'next/server';
+import { getOrCreateRequestId } from '@/lib/request-id';
 import { applySecurityHeaders } from '@/lib/security-headers';
 
 /**
@@ -49,17 +50,32 @@ async function isValidSession(jwt: string | undefined): Promise<boolean> {
   }
 }
 
+function withHeaders(req: NextRequest, response: NextResponse, requestId: string): NextResponse {
+  // Echo the request id back to the client + downstream handlers can read
+  // it from `request.headers.get('x-request-id')` and pass it to
+  // runWithRequestId() to get auto-tagged log events.
+  response.headers.set('x-request-id', requestId);
+  return applySecurityHeaders(response);
+}
+
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  if (isPublic(pathname)) return applySecurityHeaders(NextResponse.next());
+  const requestId = getOrCreateRequestId(req.headers);
+
+  // Forward x-request-id to the downstream handler so it can pick it up.
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.set('x-request-id', requestId);
+  const passthrough = NextResponse.next({ request: { headers: requestHeaders } });
+
+  if (isPublic(pathname)) return withHeaders(req, passthrough, requestId);
 
   const jwt = req.cookies.get(SESSION_COOKIE_NAME)?.value;
   const ok = await isValidSession(jwt);
-  if (ok) return applySecurityHeaders(NextResponse.next());
+  if (ok) return withHeaders(req, passthrough, requestId);
 
   const loginUrl = new URL('/login', req.url);
   loginUrl.searchParams.set('next', pathname);
-  return applySecurityHeaders(NextResponse.redirect(loginUrl));
+  return withHeaders(req, NextResponse.redirect(loginUrl), requestId);
 }
 
 export const config = {

@@ -7,9 +7,12 @@
  * - If `SENTRY_DSN` set + level >= warn: forwards to Sentry breadcrumbs;
  *   `error` level captures an exception (best-effort — silent if @sentry/node
  *   not initialized).
+ * - If a `runWithRequestId(...)` scope is active, every emitted event is
+ *   automatically tagged with `request_id` for cross-log correlation.
  *
  * The Axiom transport uses `fetch` directly so it works in Edge runtimes.
  */
+import { getCurrentRequestId } from './request-id';
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
 
@@ -98,10 +101,12 @@ function forwardToSentry(level: Level, event: string, fields: Record<string, unk
 // ---- Stdout transport (always on) ---------------------------------------
 
 function emit(level: Level, event: string, fields: Record<string, unknown>): void {
+  const requestId = getCurrentRequestId();
   const evt: LogEvent = {
     ts: new Date().toISOString(),
     level,
     event,
+    ...(requestId ? { request_id: requestId } : {}),
     ...fields,
   };
   const line = JSON.stringify(evt);

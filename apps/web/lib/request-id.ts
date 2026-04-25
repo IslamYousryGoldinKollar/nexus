@@ -1,9 +1,10 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes } from 'crypto';
 
 /**
  * Generate a unique request ID for tracing requests through the system.
  * Format: <timestamp>-<random>
- * 
+ *
  * Used for distributed tracing and debugging across API calls, webhooks, and background jobs.
  */
 export function generateRequestId(): string {
@@ -22,4 +23,27 @@ export function getOrCreateRequestId(headers: Headers): string {
     return existing;
   }
   return generateRequestId();
+}
+
+/**
+ * Per-request AsyncLocalStorage. The logger reads from this so any
+ * `log.*()` call inside a `runWithRequestId(...)` scope automatically
+ * tags its output with `request_id`.
+ *
+ * Routes opt in by wrapping their handler body:
+ *   const id = getOrCreateRequestId(req.headers);
+ *   return runWithRequestId(id, async () => { ...handler... });
+ */
+const requestIdStore = new AsyncLocalStorage<string>();
+
+export function runWithRequestId<T>(requestId: string, fn: () => T): T {
+  return requestIdStore.run(requestId, fn);
+}
+
+export function getCurrentRequestId(): string | undefined {
+  try {
+    return requestIdStore.getStore();
+  } catch {
+    return undefined;
+  }
 }
