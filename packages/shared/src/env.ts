@@ -132,11 +132,21 @@ export type ServerEnv = z.infer<typeof serverEnvSchema>;
  *
  * `raw` is `Record<string, string | undefined>` (a.k.a. the shape of
  * `process.env`) to avoid depending on `@types/node` in this package.
+ *
+ * String values are `.trim()`ed before validation. The Vercel CLI's
+ * `vercel env pull` output and a few legacy `vercel env add` invocations
+ * have left trailing `\n` characters baked into our env values; rather
+ * than asking every consumer to remember to trim (the pattern set by
+ * commit 6f5f665), do it once here.
  */
 export function parseServerEnv(
   raw: Record<string, string | undefined>,
 ): ServerEnv {
-  const result = serverEnvSchema.safeParse(raw);
+  const trimmed: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    trimmed[key] = typeof value === 'string' ? value.trim() : value;
+  }
+  const result = serverEnvSchema.safeParse(trimmed);
   if (!result.success) {
     const issues = result.error.issues
       .map((i) => `  • ${i.path.join('.')}: ${i.message}`)
