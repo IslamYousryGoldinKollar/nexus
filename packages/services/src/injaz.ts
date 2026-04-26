@@ -496,6 +496,42 @@ export async function getInjazTask(
   }
 }
 
+/**
+ * MCP `update_task` — patch an existing Injaz Task. Used by the sync
+ * cron when the AI determined a proposed task is an UPDATE rather than
+ * a new one (`proposed_tasks.injaz_existing_task_id` set).
+ *
+ * The MCP tool signature mirrors `create_task` minus the requirement
+ * for `title`. We pass only the fields the AI changed; absent fields
+ * are left as-is in Injaz.
+ */
+export async function updateInjazTaskViaMcp(
+  opts: InjazClientOptions,
+  taskId: string,
+  patch: {
+    title?: string;
+    description?: string;
+    status?: string;
+    priority?: 'low' | 'med' | 'high' | 'urgent';
+    dueDate?: string | null;
+    assignee?: string | null;
+    projectName?: string | null;
+  },
+): Promise<{ id: string }> {
+  const args: Record<string, unknown> = { taskId };
+  if (patch.title !== undefined) args.title = patch.title;
+  if (patch.description !== undefined) args.description = patch.description;
+  if (patch.status !== undefined) args.status = patch.status;
+  if (patch.priority !== undefined) args.priority = mapPriorityToInjaz(patch.priority);
+  if (patch.dueDate !== undefined && patch.dueDate !== null) args.dueDate = patch.dueDate;
+  if (patch.assignee) args.assigneeName = patch.assignee;
+  if (patch.projectName) args.projectName = patch.projectName;
+
+  await mcpToolsCall(mcpSseUrl(opts), opts.apiKey, 'update_task', args);
+  // update_task echoes the updated task; we just need to confirm.
+  return { id: taskId };
+}
+
 export async function updateInjazTask(
   opts: InjazClientOptions,
   id: string,

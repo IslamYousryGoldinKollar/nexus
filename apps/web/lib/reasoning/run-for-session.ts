@@ -1,5 +1,6 @@
 import 'server-only';
 import {
+  contacts,
   eq,
   insertProposedTasks,
   insertReasoningRun,
@@ -9,7 +10,11 @@ import {
   sql,
   type Database,
 } from '@nexus/db';
-import { reasonOverSession, GPT_4O_MINI } from '@nexus/services';
+import {
+  reasonOverSession,
+  GPT_4O_MINI,
+  listOpenInjazTasksForClient,
+} from '@nexus/services';
 import { log } from '@/lib/logger';
 import { notifyProposalCreated } from '@/lib/notify/proposal';
 
@@ -64,6 +69,39 @@ export async function runReasoningForSession(
     const toIso = (v: Date | string): string =>
       typeof v === 'string' ? v : v.toISOString();
 
+    // Pull the contact's Injaz mapping so we can fetch open tasks
+    // already on the board for that client. Without this the AI has
+    // no way to know "this is an update to existing work" vs "new
+    // task" and we get duplicates every meeting.
+    let injazPartyName: string | null = null;
+    let injazProjectName: string | null = null;
+    if (ctx.contact?.id) {
+      const [row] = await db
+        .select({
+          partyName: contacts.injazPartyName,
+          projectName: contacts.injazProjectName,
+        })
+        .from(contacts)
+        .where(eq(contacts.id, ctx.contact.id))
+        .limit(1);
+      injazPartyName = row?.partyName ?? null;
+      injazProjectName = row?.projectName ?? null;
+    }
+    const existingInjazTasks =
+      injazPartyName || injazProjectName
+        ? await listOpenInjazTasksForClient({
+            clientName: injazPartyName,
+            projectName: injazProjectName,
+            limit: 25,
+          }).catch((err) => {
+            log.warn('reasoning.injaz_lookup_failed', {
+              sessionId,
+              err: (err as Error).message,
+            });
+            return [];
+          })
+        : [];
+
     const reasonInput = {
       sessionId,
       openedAt: toIso(ctx.session.openedAt),
@@ -88,6 +126,16 @@ export async function runReasoningForSession(
         text: interaction.text,
         transcriptText: tr.length > 0 ? tr.map((t) => t.text).join('\n\n') : null,
       })),
+      existingInjazTasks: existingInjazTasks.map((t) => ({
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        status: t.status,
+        priority: t.priority,
+        dueDate: t.dueDate ? toIso(t.dueDate) : null,
+        assigneeName: t.assigneeName,
+        projectName: t.projectName,
+      })),
     };
 
     const result = await reasonOverSession({
@@ -109,6 +157,10 @@ export async function runReasoningForSession(
       latencyMs: result.latencyMs,
     });
 
+    // Validate `existingInjazTaskId` against the tasks we actually showed
+    // the model — block hallucinated ids. Anything unrecognized falls
+    // back to "create new" so we don't try to PATCH a non-existent task.
+    const knownInjazIds = new Set(existingInjazTasks.map((t) => t.id));
     const tasks = await insertProposedTasks(
       db,
       result.output.proposedTasks.map((t) => ({
@@ -119,6 +171,10 @@ export async function runReasoningForSession(
         assigneeGuess: t.assigneeGuess ?? null,
         priorityGuess: t.priority,
         dueDateGuess: t.dueDateGuess ? new Date(t.dueDateGuess) : null,
+        injazExistingTaskId:
+          t.existingInjazTaskId && knownInjazIds.has(t.existingInjazTaskId)
+            ? t.existingInjazTaskId
+            : null,
         rationale: t.rationale,
         evidence: t.evidence.map((e) => ({
           interactionId: e.interactionId,

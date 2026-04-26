@@ -29,6 +29,13 @@
       "when": 1777172578023,
       "tag": "0003_complex_black_cat",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1777181927574,
+      "tag": "0004_colorful_smiling_tiger",
+      "breakpoints": true
     }
   ]
 }

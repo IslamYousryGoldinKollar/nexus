@@ -39,6 +39,22 @@ export interface ReasonContext {
     text?: string | null;
     transcriptText?: string | null;
   }>;
+  /**
+   * Open Injaz tasks already attached to this contact's client/project.
+   * The model uses these to decide "this is an update to task X" vs
+   * "new task" — without this context every meeting would generate
+   * duplicate to-dos for work already on the board.
+   */
+  existingInjazTasks?: Array<{
+    id: string;
+    title: string;
+    description?: string | null;
+    status: string;
+    priority?: string | null;
+    dueDate?: string | null;
+    assigneeName?: string | null;
+    projectName?: string | null;
+  }>;
 }
 
 // ---- Output schema ------------------------------------------------------
@@ -58,6 +74,12 @@ export const proposedTaskSchema = z.object({
     .default('med'),
   assigneeGuess: z.string().nullable().optional(),
   dueDateGuess: z.string().datetime().nullable().optional(),
+  /**
+   * Set ONLY when the AI has determined this proposal updates an
+   * existing Injaz task (the id must come from the existingInjazTasks
+   * the model was shown). Null/undefined = create a new task.
+   */
+  existingInjazTaskId: z.string().nullable().optional(),
   rationale: z.string().min(1).max(2000),
   evidence: z
     .array(
@@ -108,6 +130,7 @@ const OUTPUT_CONTRACT = `You must respond with ONLY a single JSON object matchin
     "priority": "low" | "med" | "high" | "urgent",
     "assigneeGuess": string | null,  // if not Islam, name or role; else null
     "dueDateGuess": string | null,   // ISO 8601 datetime or null
+    "existingInjazTaskId": string | null,  // see CREATE-vs-UPDATE rule below
     "rationale": string,      // why this task is the right call
     "evidence": Array<{
       "interactionId": string, // uuid you saw in the input
@@ -119,7 +142,21 @@ const OUTPUT_CONTRACT = `You must respond with ONLY a single JSON object matchin
 Output rules:
   - Return STRICTLY valid JSON. No prose, no markdown, no code fences.
   - evidence MUST reference real interactionIds from this session.
-  - If there is no follow-up, return { "proposedTasks": [] }.`;
+  - If there is no follow-up, return { "proposedTasks": [] }.
+
+CREATE-vs-UPDATE rule (CRITICAL — read carefully):
+  - If the input includes an "Existing open Injaz tasks" block, scan it
+    before producing each proposedTask.
+  - If the new finding is clearly the SAME piece of work as one of
+    those existing tasks (same deliverable, same client, same intent),
+    set "existingInjazTaskId" to that task's id and write
+    title/description as the UPDATED version (e.g. revised due date,
+    new sub-points, status change). Do NOT duplicate.
+  - If the new finding is genuinely a separate task, leave
+    "existingInjazTaskId" as null. New work goes through a fresh
+    create_task in Injaz.
+  - When in doubt, prefer UPDATE — duplicate tasks are worse than
+    one slightly-too-broad task.`;
 
 function buildContactHeader(ctx: ReasonContext): string {
   if (!ctx.contact) return '(Unknown contact — identity not yet resolved)';
@@ -144,7 +181,28 @@ function buildSessionBody(ctx: ReasonContext): string {
         : (i.text ?? '(no text body)');
     return `[${idx + 1}] id=${i.id} ${i.channel}/${i.contentType} (${i.direction}) @ ${i.occurredAt}\n    ${body.replace(/\n/g, '\n    ')}`;
   });
-  return [header, contactBlock, '', 'Interactions (chronological):', ...interactionLines].join('\n');
+
+  const sections = [header, contactBlock, '', 'Interactions (chronological):', ...interactionLines];
+
+  // Inject existing Injaz tasks if any — the model uses these to
+  // decide CREATE vs UPDATE per the OUTPUT_CONTRACT rule.
+  const existing = ctx.existingInjazTasks ?? [];
+  if (existing.length > 0) {
+    sections.push('', `Existing open Injaz tasks for this client (${existing.length}):`);
+    for (const t of existing) {
+      const meta = [
+        t.priority ? `priority=${t.priority}` : null,
+        t.assigneeName ? `assignee=${t.assigneeName}` : null,
+        t.projectName ? `project=${t.projectName}` : null,
+        t.dueDate ? `due=${t.dueDate}` : null,
+      ]
+        .filter(Boolean)
+        .join(', ');
+      const desc = t.description ? `\n    ${t.description.replace(/\n/g, '\n    ')}` : '';
+      sections.push(`- id=${t.id} status=${t.status}${meta ? ` (${meta})` : ''}\n    "${t.title}"${desc}`);
+    }
+  }
+  return sections.join('\n');
 }
 
 // ---- Main entry ---------------------------------------------------------

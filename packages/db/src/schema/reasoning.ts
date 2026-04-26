@@ -69,6 +69,11 @@ export const proposedTasks = pgTable(
     // because Injaz's MCP `create_task` takes `assigneeName`. Falls
     // back to assigneeGuess when null.
     assigneeInjazUserName: text('assignee_injaz_user_name'),
+    // When the AI decides this proposal is an UPDATE to an existing
+    // Injaz task (rather than a brand-new one), it sets this to the
+    // Injaz Task.id. The sync cron then calls MCP `update_task`
+    // instead of `create_task`. Null = create a new task.
+    injazExistingTaskId: text('injaz_existing_task_id'),
     priorityGuess: priorityEnum('priority_guess').notNull().default('med'),
     dueDateGuess: timestamp('due_date_guess', { withTimezone: true }),
     rationale: text('rationale').notNull(),

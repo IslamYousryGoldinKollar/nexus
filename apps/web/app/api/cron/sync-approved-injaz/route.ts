@@ -21,6 +21,7 @@ import {
   type InjazError,
   supabaseStorageCredsFromEnv,
   signSupabaseGetUrl,
+  updateInjazTaskViaMcp,
 } from '@nexus/services';
 import { log } from '@/lib/logger';
 import { withRequestId } from '@/lib/request-id';
@@ -78,6 +79,7 @@ export async function GET(req: NextRequest) {
         dueDateGuess: proposedTasksTable.dueDateGuess,
         assigneeGuess: proposedTasksTable.assigneeGuess,
         assigneeInjazUserName: proposedTasksTable.assigneeInjazUserName,
+        injazExistingTaskId: proposedTasksTable.injazExistingTaskId,
         injazProjectName: contactsTable.injazProjectName,
       })
       .from(proposedTasksTable)
@@ -125,19 +127,40 @@ export async function GET(req: NextRequest) {
         // routes the task into the right Injaz project.
         const assignee = task.assigneeInjazUserName ?? task.assigneeGuess ?? null;
 
-        const injazTask = await createInjazTask(client, {
-          title: task.title,
-          description,
-          priority: task.priorityGuess,
-          dueDate: task.dueDateGuess ? (task.dueDateGuess as unknown as string) : null,
-          assignee,
-          projectName: task.injazProjectName ?? undefined,
-          externalRefId: task.id,
-        });
+        // Branch on whether the AI flagged this as updating an existing
+        // Injaz task or creating a fresh one. The flag was already
+        // validated against the snapshot of open tasks shown to the
+        // model (see runReasoningForSession), so we trust it here.
+        let syncMode: 'created' | 'updated';
+        let injazId: string;
+        if (task.injazExistingTaskId) {
+          await updateInjazTaskViaMcp(client, task.injazExistingTaskId, {
+            title: task.title,
+            description,
+            priority: task.priorityGuess,
+            dueDate: task.dueDateGuess ? (task.dueDateGuess as unknown as string) : null,
+            assignee,
+            projectName: task.injazProjectName ?? undefined,
+          });
+          injazId = task.injazExistingTaskId;
+          syncMode = 'updated';
+        } else {
+          const injazTask = await createInjazTask(client, {
+            title: task.title,
+            description,
+            priority: task.priorityGuess,
+            dueDate: task.dueDateGuess ? (task.dueDateGuess as unknown as string) : null,
+            assignee,
+            projectName: task.injazProjectName ?? undefined,
+            externalRefId: task.id,
+          });
+          injazId = injazTask.id;
+          syncMode = 'created';
+        }
 
         await upsertApprovedTask(db, {
           proposedTaskId: task.id,
-          injazTaskId: injazTask.id,
+          injazTaskId: injazId,
           syncState: 'synced',
           lastSyncedAt: new Date(),
           syncError: null,
@@ -146,12 +169,13 @@ export async function GET(req: NextRequest) {
 
         results.push({
           proposedTaskId: task.id,
-          status: 'synced',
-          injazTaskId: injazTask.id,
+          status: syncMode === 'updated' ? 'updated' : 'synced',
+          injazTaskId: injazId,
         });
         log.info('cron.sync-approved-injaz.synced', {
           proposedTaskId: task.id,
-          injazTaskId: injazTask.id,
+          injazTaskId: injazId,
+          mode: syncMode,
         });
       } catch (err) {
         const ie = err as InjazError;

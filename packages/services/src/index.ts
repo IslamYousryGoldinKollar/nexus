@@ -15,4 +15,5 @@ export {
 export * from './telegram-bot.js';
 export * from './budget.js';
 export * from './injaz.js';
+export * from './injaz-db.js';
 export * from './resend.js';
