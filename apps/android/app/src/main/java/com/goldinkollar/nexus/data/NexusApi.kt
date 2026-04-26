@@ -36,9 +36,14 @@ class NexusApi(
             // classDiscriminator = "action" matches the server's z.discriminatedUnion('action', …)
             // schema in apps/web/app/api/approvals/[id]/action/route.ts. Without this the
             // default 'type' discriminator is sent and the server rejects with invalid_payload.
+            //
+            // encodeDefaults = true so properties with default values (e.g. PairClaimRequest.platform
+            // = "android") are written into the JSON. Without this the server got requests
+            // missing the `platform` field and Zod returned 400.
             json(Json {
                 ignoreUnknownKeys = true
                 explicitNulls = false
+                encodeDefaults = true
                 classDiscriminator = "action"
             })
         }
