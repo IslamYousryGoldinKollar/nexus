@@ -35,8 +35,19 @@ export function getOpenAIClient(apiKey: string): OpenAI {
 export const GPT_4O_MINI = 'gpt-4o-mini';
 export const GPT_4_1_MINI = 'gpt-4.1-mini';
 export const GPT_4_1 = 'gpt-4.1';
-/** Default model for new reasoning runs unless OPENAI_MODEL is set. */
-export const DEFAULT_REASONING_MODEL = GPT_4_1_MINI;
+/**
+ * Default model for new reasoning runs unless OPENAI_MODEL is set.
+ *
+ * Picked for the "we want it close to perfect" target the user set:
+ * gpt-4.1 full produces noticeably tighter task descriptions, gets
+ * update-vs-create right more often, and respects the multi-section
+ * context blocks (existing tasks, past sessions, workload) without
+ * losing track. ~5× the cost of gpt-4.1-mini ($2/$8 vs $0.40/$1.60
+ * per Mtok), still well under $1/day at our throughput.
+ *
+ * Drop to GPT_4_1_MINI via OPENAI_MODEL env if cost climbs.
+ */
+export const DEFAULT_REASONING_MODEL = GPT_4_1;
 
 // Per-million token prices for the models we actually use. computeOpenAICostUsd
 // picks the right rate based on the requested model — falling back to the
