@@ -1,4 +1,9 @@
-dist/
 node_modules/
 .turbo/
 *.tsbuildinfo
+
+# dist/ IS tracked in this package — it's the artifact end users
+# load via "Load unpacked" in chrome://extensions. Without dist
+# committed, pulling the latest source still leaves a stale build
+# in everyone's working tree. The build script is fast (<1s) so
+# the dist + src delta is small per-PR.
