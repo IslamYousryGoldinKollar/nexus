@@ -43,8 +43,14 @@ async function handleIngest(payload: TeamsIngestPayload): Promise<{ ok: boolean;
   return { ok: true };
 }
 
-// Optional: keep the SW warm by pinging on a cron-style alarm.
-chrome.alarms.create('keepalive', { periodInMinutes: 4 });
-chrome.alarms.onAlarm.addListener(() => {
-  // No-op; the alarm fire keeps the SW from being torn down between scrapes.
-});
+// Optional: keep the SW warm by pinging on a cron-style alarm. Guarded
+// because the `alarms` permission is technically optional — without it
+// `chrome.alarms` is undefined and accessing `.create` would crash the
+// service worker (Chrome reports this as "Service worker registration
+// failed. Status code: 15").
+if (chrome.alarms) {
+  chrome.alarms.create('keepalive', { periodInMinutes: 4 });
+  chrome.alarms.onAlarm.addListener(() => {
+    // No-op; the alarm fire keeps the SW from being torn down between scrapes.
+  });
+}
