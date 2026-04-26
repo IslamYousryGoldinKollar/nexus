@@ -54,7 +54,17 @@ chrome.runtime.onMessage.addListener((msg: ExtMessage, _sender, sendResponse) =>
 async function start(streamId: string, startedAt: string): Promise<void> {
   if (active) throw new Error('already_recording');
 
-  const stream = await (navigator.mediaDevices as MediaDevicesWithLegacy).getUserMedia({
+  // Capture both sides of the conversation:
+  //   - tabStream: remote participants (whatever Teams/Zoom/Meet plays
+  //     through the tab, including WebRTC peer audio)
+  //   - micStream: the user's own voice through the default mic
+  //
+  // We mix them with Web Audio so MediaRecorder gets a single track.
+  // The first attempt at this extension only used tab audio, which on
+  // Teams produced a 5 KB recording with the transcript "you" — Teams
+  // routes peer audio through a path that tabCapture sometimes misses.
+  // Adding the mic guarantees we at least capture the user's side.
+  const tabStream = await (navigator.mediaDevices as MediaDevicesWithLegacy).getUserMedia({
     audio: {
       mandatory: {
         chromeMediaSource: 'tab',
@@ -64,16 +74,40 @@ async function start(streamId: string, startedAt: string): Promise<void> {
     video: false,
   });
 
-  // Pipe captured audio back to the user's speakers — without this,
-  // tabCapture silences the source tab and the meeting goes mute.
-  let audioCtx: AudioContext | null = null;
+  let micStream: MediaStream | null = null;
   try {
-    audioCtx = new AudioContext();
-    const src = audioCtx.createMediaStreamSource(stream);
-    src.connect(audioCtx.destination);
-  } catch {
-    /* if AudioContext fails, recording still works; user just hears nothing locally */
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    });
+  } catch (err) {
+    // No mic permission / no mic — fall back to tab-only. Better to
+    // record the meeting one-sided than fail the whole thing.
+    console.warn('mic capture failed, recording tab only:', err);
   }
+
+  // Mix tab + mic into a single MediaStream via AudioContext.
+  // Also pipes tab audio back to the user's speakers — without this,
+  // tabCapture silences the source tab and the meeting goes mute on
+  // the user's end.
+  const audioCtx = new AudioContext();
+  const dest = audioCtx.createMediaStreamDestination();
+
+  const tabSrc = audioCtx.createMediaStreamSource(tabStream);
+  tabSrc.connect(dest);
+  tabSrc.connect(audioCtx.destination); // monitor
+
+  if (micStream) {
+    const micSrc = audioCtx.createMediaStreamSource(micStream);
+    micSrc.connect(dest);
+    // Don't connect mic to destination — would create local echo.
+  }
+
+  const stream = dest.stream;
 
   // Prefer Opus-in-WebM — universally supported by Chrome's MediaRecorder
   // and Whisper accepts it directly.

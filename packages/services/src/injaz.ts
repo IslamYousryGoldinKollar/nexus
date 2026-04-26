@@ -403,37 +403,85 @@ export async function listInjazProjects(
 }
 
 /**
- * MCP tool results come back as `{ content: [{type:'text', text:'<JSON>'}] }`.
- * The text payload is the actual array we want; this helper handles
- * both that shape and the rare case where structuredContent is set.
+ * MCP tool results come back as `{ content: [{type:'text', text:'<...>'}] }`.
+ * Injaz prefixes the JSON array with a human-readable line, e.g.
+ * `"Found 11 parties:\n[ {...}, ... ]"`, and HTML-encodes ampersands
+ * inside string values (`"e&"` → `"e&amp;"`). This helper:
+ *
+ *   1. Tries direct JSON.parse on `text` (handles servers that return
+ *      pure JSON).
+ *   2. Falls back to extracting the substring between the first `[`
+ *      and last `]`, then JSON.parse that.
+ *   3. After parse, decodes the most common HTML entities on every
+ *      string value so name-based matching (`contact.injaz_party_name`
+ *      → MCP `projectName`) works without surprises.
+ *
+ * structuredContent is checked first for spec-strict MCP servers.
  */
 function parseListResult<T>(mcpResult: unknown): T[] {
   if (!mcpResult || typeof mcpResult !== 'object') return [];
   const r = mcpResult as Record<string, unknown>;
   const sc = r.structuredContent;
-  if (Array.isArray(sc)) return sc as T[];
+  if (Array.isArray(sc)) return decodeArrayEntities(sc) as T[];
+
   const content = r.content as Array<{ type?: string; text?: string }> | undefined;
-  if (Array.isArray(content)) {
-    for (const c of content) {
-      if (c.type === 'text' && typeof c.text === 'string') {
-        try {
-          const parsed = JSON.parse(c.text);
-          if (Array.isArray(parsed)) return parsed as T[];
-          // Some MCP servers wrap the array in `{ items: [...] }` or `{ data: [...] }`.
-          if (parsed && typeof parsed === 'object') {
-            for (const k of ['items', 'data', 'results']) {
-              if (Array.isArray((parsed as Record<string, unknown>)[k])) {
-                return (parsed as Record<string, unknown>)[k] as T[];
-              }
-            }
-          }
-        } catch {
-          /* not JSON; ignore */
-        }
-      }
-    }
+  if (!Array.isArray(content)) return [];
+
+  for (const c of content) {
+    if (c.type !== 'text' || typeof c.text !== 'string') continue;
+    const arr = extractJsonArray(c.text);
+    if (arr) return decodeArrayEntities(arr) as T[];
   }
   return [];
+}
+
+function extractJsonArray(text: string): unknown[] | null {
+  // Direct JSON parse first.
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === 'object') {
+      for (const k of ['items', 'data', 'results']) {
+        const v = (parsed as Record<string, unknown>)[k];
+        if (Array.isArray(v)) return v;
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+  // Substring fallback: find the first '[' and matching last ']'.
+  const start = text.indexOf('[');
+  const end = text.lastIndexOf(']');
+  if (start === -1 || end === -1 || end <= start) return null;
+  try {
+    const sliced = JSON.parse(text.slice(start, end + 1));
+    if (Array.isArray(sliced)) return sliced;
+  } catch {
+    /* give up */
+  }
+  return null;
+}
+
+function decodeArrayEntities(arr: unknown[]): unknown[] {
+  return arr.map((item) => {
+    if (!item || typeof item !== 'object') return item;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(item as Record<string, unknown>)) {
+      out[k] = typeof v === 'string' ? decodeHtmlEntities(v) : v;
+    }
+    return out;
+  });
+}
+
+function decodeHtmlEntities(s: string): string {
+  // Just the entities we've seen Injaz emit. Avoid pulling a full
+  // entity-decoding lib for one MCP quirk.
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
 }
 
 export async function getInjazTask(
