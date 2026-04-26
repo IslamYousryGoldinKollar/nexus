@@ -20,7 +20,15 @@ kill_timeout = "10s"
   force_https = true
   auto_stop_machines = false
   auto_start_machines = true
+  # WhatsApp's linked-device protocol allows ONLY ONE active WebSocket
+  # per credentials. If two wa-bridge machines run with the same auth
+  # state they fight over the connection — WhatsApp emits
+  # `stream:error conflict replaced`, both restart, and we hit a
+  # restart loop where no messages get through (Apr 26 incident).
+  # Keep this at 1 forever. If we ever scale, we need per-instance
+  # auth credentials, not parallel instances of the same one.
   min_machines_running = 1
+  max_machines_running = 1
 
   [[http_service.checks]]
     interval = "30s"
