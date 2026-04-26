@@ -39,14 +39,22 @@ export async function GET(req: NextRequest) {
 
     const db = getDb();
 
-    // Atomic flip: pick eligible sessions and bump them to `reasoning`
-    // in one statement so concurrent cron invocations don't double-fire
-    // on the same session.
+    // Atomic flip: pick eligible sessions and bump them to `reasoning`.
+    // We re-claim sessions already in `reasoning` state if they've been
+    // sitting there longer than 5 cooldown intervals — that means the
+    // previous tick crashed or timed out before finishing. Without this
+    // sessions get permanently stuck the moment auto-reason hits its
+    // maxDuration.
+    const stuckCutoffIso = new Date(Date.now() - cooldownMin * 5 * 60 * 1000).toISOString();
     const promoted = await db
       .update(sessions)
       .set({ state: 'reasoning', updatedAt: sql`now()` })
       .where(
-        sql`${sessions.state} in ('open', 'aggregating') and ${sessions.lastActivityAt} <= ${cutoffIso}`,
+        sql`(
+          (${sessions.state} in ('open', 'aggregating') and ${sessions.lastActivityAt} <= ${cutoffIso})
+          OR
+          (${sessions.state} = 'reasoning' and ${sessions.updatedAt} <= ${stuckCutoffIso})
+        )`,
       )
       .returning({ id: sessions.id });
 

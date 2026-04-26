@@ -1,7 +1,15 @@
 import { createHash } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { InteractionIngestedEvent } from '@nexus/shared';
-import { insertAttachment, upsertInteraction } from '@nexus/db';
+import {
+  contacts,
+  eq,
+  insertAttachment,
+  interactions as interactionsTable,
+  sessions as sessionsTable,
+  sql,
+  upsertInteraction,
+} from '@nexus/db';
 import { inngest } from '@nexus/inngest-fns';
 import { getDb } from '../../db';
 import { log } from '../../logger';
@@ -96,6 +104,16 @@ export async function ingestMeetingRecording(args: {
     checksum: checksumHex,
   });
 
+  // Meetings don't have a counterparty identifier (no phone/email
+  // in the upload payload), so the regular process-pending cron skips
+  // them and they end up orphaned with session_id = NULL. Pin every
+  // meeting to a synthetic "Meetings" contact and open a fresh session
+  // per recording. lastActivityAt is backdated past the cooldown so
+  // the next auto-reason tick picks it up immediately.
+  if (inserted) {
+    await attachMeetingToSession(db, interaction.id, occurredAt, endedAt);
+  }
+
   if (inserted) {
     const event: InteractionIngestedEvent = {
       name: 'nexus/interaction.ingested',
@@ -125,6 +143,59 @@ export async function ingestMeetingRecording(args: {
     checksumHex,
     alreadyExisted: uploaded.alreadyExisted,
   };
+}
+
+/**
+ * Resolve (or lazily create) the catch-all "Meetings" contact and
+ * open a fresh session for this meeting recording. We deliberately
+ * don't reuse the contact's previous session — each meeting is its
+ * own conversation and should produce its own approval card.
+ */
+async function attachMeetingToSession(
+  db: ReturnType<typeof getDb>,
+  interactionId: string,
+  occurredAt: Date,
+  endedAt: Date,
+): Promise<void> {
+  const MEETINGS_NAME = 'Meetings';
+
+  let [row] = await db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(eq(contacts.displayName, MEETINGS_NAME))
+    .limit(1);
+
+  if (!row) {
+    const created = await db
+      .insert(contacts)
+      .values({
+        displayName: MEETINGS_NAME,
+        notes: 'Auto-created bucket for browser-extension meeting recordings.',
+      })
+      .returning({ id: contacts.id });
+    row = created[0];
+    if (!row) throw new Error('failed to create Meetings contact');
+  }
+
+  // Backdate lastActivityAt by 10 minutes so the next auto-reason tick
+  // (which only picks up sessions past SESSION_COOLDOWN_MIN, default 5)
+  // grabs this session right away instead of waiting for new activity.
+  const backdated = new Date(endedAt.getTime() - 10 * 60 * 1000);
+  const [session] = await db
+    .insert(sessionsTable)
+    .values({
+      contactId: row.id,
+      state: 'open',
+      openedAt: occurredAt,
+      lastActivityAt: backdated,
+    })
+    .returning({ id: sessionsTable.id });
+  if (!session) throw new Error('failed to open meeting session');
+
+  await db
+    .update(interactionsTable)
+    .set({ sessionId: session.id })
+    .where(eq(interactionsTable.id, interactionId));
 }
 
 function buildStorageKey(
