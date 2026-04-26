@@ -12,11 +12,14 @@ import {
 } from '@nexus/db';
 import {
   reasonOverSession,
-  GPT_4O_MINI,
+  DEFAULT_REASONING_MODEL,
   listOpenInjazTasksForClient,
+  listInjazProjectsForClient,
+  listInjazAssigneeWorkload,
 } from '@nexus/services';
 import { log } from '@/lib/logger';
 import { notifyProposalCreated } from '@/lib/notify/proposal';
+import { loadPastSessionsForContact } from '@/lib/queries/contact-history';
 
 export type RunReasoningStatus =
   | { status: 'completed'; reasoningRunId: string; taskCount: number; nextState: 'awaiting_approval' | 'closed'; costUsd: number; latencyMs: number; firstTaskId: string | null }
@@ -48,7 +51,7 @@ export async function runReasoningForSession(
     log.error('reasoning.no_api_key', { sessionId });
     return { status: 'no_api_key' };
   }
-  const model = process.env.OPENAI_MODEL?.trim() || GPT_4O_MINI;
+  const model = process.env.OPENAI_MODEL?.trim() || DEFAULT_REASONING_MODEL;
 
   try {
     const ctx = await loadSessionContext(db, sessionId);
@@ -87,20 +90,43 @@ export async function runReasoningForSession(
       injazPartyName = row?.partyName ?? null;
       injazProjectName = row?.projectName ?? null;
     }
-    const existingInjazTasks =
+    // Pull all the Injaz-side context the AI needs in parallel — every
+    // call is independent and adds up to ~1-2s sequentially. Failures
+    // are logged but don't block reasoning; an empty array just means
+    // the AI sees no extra context for that dimension.
+    const [
+      existingInjazTasks,
+      clientProjects,
+      assigneeWorkload,
+      pastSessions,
+    ] = await Promise.all([
       injazPartyName || injazProjectName
-        ? await listOpenInjazTasksForClient({
+        ? listOpenInjazTasksForClient({
             clientName: injazPartyName,
             projectName: injazProjectName,
             limit: 25,
           }).catch((err) => {
-            log.warn('reasoning.injaz_lookup_failed', {
-              sessionId,
-              err: (err as Error).message,
-            });
+            log.warn('reasoning.injaz_tasks_failed', { sessionId, err: (err as Error).message });
             return [];
           })
-        : [];
+        : Promise.resolve([]),
+      injazPartyName
+        ? listInjazProjectsForClient(injazPartyName).catch((err) => {
+            log.warn('reasoning.injaz_projects_failed', { sessionId, err: (err as Error).message });
+            return [];
+          })
+        : Promise.resolve([]),
+      listInjazAssigneeWorkload().catch((err) => {
+        log.warn('reasoning.injaz_workload_failed', { sessionId, err: (err as Error).message });
+        return [];
+      }),
+      ctx.contact?.id
+        ? loadPastSessionsForContact(db, ctx.contact.id, sessionId, 5).catch((err) => {
+            log.warn('reasoning.past_sessions_failed', { sessionId, err: (err as Error).message });
+            return [];
+          })
+        : Promise.resolve([]),
+    ]);
 
     const reasonInput = {
       sessionId,
@@ -135,6 +161,21 @@ export async function runReasoningForSession(
         dueDate: t.dueDate ? toIso(t.dueDate) : null,
         assigneeName: t.assigneeName,
         projectName: t.projectName,
+      })),
+      clientProjects: clientProjects.map((p) => ({
+        name: p.name,
+        openTaskCount: p.openTaskCount,
+        description: p.description,
+      })),
+      assigneeWorkload: assigneeWorkload.map((w) => ({
+        name: w.name,
+        openTasks: w.openTasks,
+      })),
+      pastSessions: pastSessions.map((s) => ({
+        openedAt: toIso(s.openedAt),
+        state: s.state,
+        summary: s.summary,
+        proposedTitles: s.proposedTitles,
       })),
     };
 

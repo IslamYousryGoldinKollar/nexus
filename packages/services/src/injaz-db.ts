@@ -121,3 +121,88 @@ export async function listOpenInjazTasksForClient(args: {
 
   return rows;
 }
+
+export interface InjazProjectSummary {
+  id: string;
+  name: string;
+  status: string;
+  description: string | null;
+  openTaskCount: number;
+}
+
+/**
+ * All ACTIVE projects for a client + how many open tasks each carries.
+ * Lets the AI know "this client has 4 active projects, you should
+ * probably attach the new task to project X because it's where the
+ * existing related work lives."
+ */
+export async function listInjazProjectsForClient(
+  clientName: string,
+): Promise<InjazProjectSummary[]> {
+  const c = client();
+  if (!c) return [];
+  const rows = await c<
+    Array<{
+      id: string;
+      name: string;
+      status: string;
+      description: string | null;
+      openTaskCount: string;
+    }>
+  >`
+    SELECT
+      p.id,
+      p.name,
+      p.status,
+      p.description,
+      COUNT(t.id) FILTER (
+        WHERE t.status NOT IN ('Done', 'Cancelled', 'Archived')
+      )::text AS "openTaskCount"
+    FROM "Project" p
+    LEFT JOIN "Party" party ON party.id = p."clientPartyId"
+    LEFT JOIN "Task" t ON t."projectId" = p.id
+    WHERE party.name = ${clientName} AND p.status = 'ACTIVE'
+    GROUP BY p.id, p.name, p.status, p.description
+    ORDER BY COUNT(t.id) DESC, p.name ASC
+  `;
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    status: r.status,
+    description: r.description,
+    openTaskCount: Number(r.openTaskCount),
+  }));
+}
+
+export interface InjazAssigneeWorkload {
+  name: string;
+  email: string;
+  openTasks: number;
+}
+
+/**
+ * Open task count per Injaz user — used by the reasoner to suggest a
+ * less-loaded assignee when nobody is implied by the conversation. Only
+ * counts non-terminal task statuses.
+ */
+export async function listInjazAssigneeWorkload(): Promise<InjazAssigneeWorkload[]> {
+  const c = client();
+  if (!c) return [];
+  const rows = await c<Array<{ name: string; email: string; openTasks: string }>>`
+    SELECT
+      u.name,
+      u.email,
+      COUNT(t.id)::text AS "openTasks"
+    FROM "User" u
+    LEFT JOIN "Task" t
+      ON t."assigneeId" = u.id
+      AND t.status NOT IN ('Done', 'Cancelled', 'Archived')
+    GROUP BY u.id, u.name, u.email
+    ORDER BY u.name
+  `;
+  return rows.map((r) => ({
+    name: r.name,
+    email: r.email,
+    openTasks: Number(r.openTasks),
+  }));
+}

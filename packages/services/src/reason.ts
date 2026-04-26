@@ -2,7 +2,11 @@ import type Anthropic from '@anthropic-ai/sdk';
 import type OpenAI from 'openai';
 import { z } from 'zod';
 import { computeClaudeCostUsd, getAnthropicClient, SONNET_4_5 } from './anthropic.js';
-import { computeOpenAICostUsd, getOpenAIClient, GPT_4O_MINI } from './openai.js';
+import {
+  computeOpenAICostUsd,
+  getOpenAIClient,
+  DEFAULT_REASONING_MODEL,
+} from './openai.js';
 
 /**
  * Phase 4 — Reason over a session context with Claude Sonnet 4.5 or GPT-4o-mini (OpenAI).
@@ -55,6 +59,35 @@ export interface ReasonContext {
     assigneeName?: string | null;
     projectName?: string | null;
   }>;
+  /**
+   * Active Injaz projects for this client (with how many open tasks
+   * each carries). Helps the AI pick a likely projectName when the
+   * conversation doesn't name one explicitly.
+   */
+  clientProjects?: Array<{
+    name: string;
+    openTaskCount: number;
+    description?: string | null;
+  }>;
+  /**
+   * Open task count per Injaz user. The reasoner uses this to suggest
+   * the least-loaded approved employee when the message doesn't name
+   * an assignee.
+   */
+  assigneeWorkload?: Array<{
+    name: string;
+    openTasks: number;
+  }>;
+  /**
+   * Previous sessions for this contact + what tasks they produced.
+   * Provides relationship history without dumping full transcripts.
+   */
+  pastSessions?: Array<{
+    openedAt: string;
+    state: string;
+    summary?: string | null;
+    proposedTitles: Array<{ title: string; state: string }>;
+  }>;
 }
 
 // ---- Output schema ------------------------------------------------------
@@ -102,8 +135,33 @@ export type ReasonOutput = z.infer<typeof reasonOutputSchema>;
 
 const NEXUS_PERSONA = `You are Nexus, the AI Chief of Staff for Islam Yousry at GoldinKollar.
 Your only job is to look at client-communication sessions (WhatsApp, Gmail,
-Telegram, phone call transcripts, Teams messages) and propose zero to five
-concrete follow-up tasks that Islam should add to Injaz, his task manager.
+Telegram, phone call transcripts, Teams meeting recordings) and propose zero
+to five concrete follow-up tasks that Islam should add to Injaz, his
+task manager.
+
+How to think before producing the JSON (do this internally, do NOT
+include it in the output):
+
+  Step 1 — Read the session. What is the client actually asking for?
+  Step 2 — Look at "Existing open Injaz tasks for this client". For
+           each candidate finding, ask: is this work already on the
+           board? Same deliverable + same client + same intent ⇒
+           UPDATE the existing task, do NOT create a duplicate.
+  Step 3 — Look at "Past sessions for this contact". Have we
+           discussed this before? If a prior session produced a task
+           with the same title, prefer UPDATE-ing that one (its id
+           will be in the existing-tasks block too).
+  Step 4 — Look at "Active projects for this client". When you have
+           to set projectName, prefer a project with related open
+           tasks over a generic "General Operations" bucket.
+  Step 5 — Look at "Assignee workload". When the conversation doesn't
+           name an assignee, prefer the approved employee with the
+           lowest open-task count.
+  Step 6 — Write the task description like a brief: include the
+           specific deliverable, any numbers/dates the client gave,
+           and the next physical action. Avoid vague verbs like
+           "follow up" — prefer "Send revised PPP draft v3 with the
+           updated activity timeline".
 
 Hard rules you must NEVER violate:
   - You never send messages to clients directly. Everything you produce is
@@ -118,7 +176,9 @@ Hard rules you must NEVER violate:
   - If due date is genuinely unclear, set dueDateGuess to null. Do not
     guess from vibes.
   - Write tasks in the language the client used (if they wrote in Arabic,
-    write the task in Arabic).`;
+    write the task in Arabic).
+  - existingInjazTaskId MUST come from the "Existing open Injaz tasks"
+    block — never invent an id.`;
 
 const OUTPUT_CONTRACT = `You must respond with ONLY a single JSON object matching this TypeScript type:
 
@@ -172,8 +232,12 @@ function buildContactHeader(ctx: ReasonContext): string {
 }
 
 function buildSessionBody(ctx: ReasonContext): string {
-  const header = `Session ${ctx.sessionId} (opened ${ctx.openedAt}, last activity ${ctx.lastActivityAt}).`;
-  const contactBlock = buildContactHeader(ctx);
+  const header = `=== SESSION ===
+Session ${ctx.sessionId} (opened ${ctx.openedAt}, last activity ${ctx.lastActivityAt}).`;
+
+  const contactBlock = `=== CONTACT ===
+${buildContactHeader(ctx)}`;
+
   const interactionLines = ctx.interactions.map((i, idx) => {
     const body =
       i.transcriptText && i.transcriptText.length > 0
@@ -181,14 +245,14 @@ function buildSessionBody(ctx: ReasonContext): string {
         : (i.text ?? '(no text body)');
     return `[${idx + 1}] id=${i.id} ${i.channel}/${i.contentType} (${i.direction}) @ ${i.occurredAt}\n    ${body.replace(/\n/g, '\n    ')}`;
   });
+  const interactionsBlock = `=== INTERACTIONS (chronological) ===
+${interactionLines.join('\n')}`;
 
-  const sections = [header, contactBlock, '', 'Interactions (chronological):', ...interactionLines];
+  const sections: string[] = [header, '', contactBlock, '', interactionsBlock];
 
-  // Inject existing Injaz tasks if any — the model uses these to
-  // decide CREATE vs UPDATE per the OUTPUT_CONTRACT rule.
   const existing = ctx.existingInjazTasks ?? [];
   if (existing.length > 0) {
-    sections.push('', `Existing open Injaz tasks for this client (${existing.length}):`);
+    const lines: string[] = [`=== EXISTING OPEN INJAZ TASKS (${existing.length}) ===`];
     for (const t of existing) {
       const meta = [
         t.priority ? `priority=${t.priority}` : null,
@@ -198,10 +262,44 @@ function buildSessionBody(ctx: ReasonContext): string {
       ]
         .filter(Boolean)
         .join(', ');
-      const desc = t.description ? `\n    ${t.description.replace(/\n/g, '\n    ')}` : '';
-      sections.push(`- id=${t.id} status=${t.status}${meta ? ` (${meta})` : ''}\n    "${t.title}"${desc}`);
+      const desc = t.description ? `\n    ${t.description.replace(/\n/g, '\n    ').slice(0, 400)}` : '';
+      lines.push(`- id=${t.id} status=${t.status}${meta ? ` (${meta})` : ''}\n    "${t.title}"${desc}`);
     }
+    sections.push('', lines.join('\n'));
   }
+
+  const projects = ctx.clientProjects ?? [];
+  if (projects.length > 0) {
+    const lines: string[] = [`=== ACTIVE PROJECTS FOR THIS CLIENT (${projects.length}) ===`];
+    for (const p of projects) {
+      const desc = p.description ? ` — ${p.description.replace(/\n/g, ' ').slice(0, 120)}` : '';
+      lines.push(`- "${p.name}" (${p.openTaskCount} open task${p.openTaskCount === 1 ? '' : 's'})${desc}`);
+    }
+    sections.push('', lines.join('\n'));
+  }
+
+  const workload = ctx.assigneeWorkload ?? [];
+  if (workload.length > 0) {
+    const lines = [`=== ASSIGNEE WORKLOAD (use to suggest least-loaded employee) ===`];
+    for (const w of workload) {
+      lines.push(`- ${w.name}: ${w.openTasks} open task${w.openTasks === 1 ? '' : 's'}`);
+    }
+    sections.push('', lines.join('\n'));
+  }
+
+  const past = ctx.pastSessions ?? [];
+  if (past.length > 0) {
+    const lines = [`=== PAST SESSIONS WITH THIS CONTACT (${past.length}) ===`];
+    for (const s of past) {
+      const head = `- ${s.openedAt} (${s.state})${s.summary ? ` — ${s.summary.slice(0, 200)}` : ''}`;
+      lines.push(head);
+      for (const t of s.proposedTitles) {
+        lines.push(`    · ${t.state}: ${t.title}`);
+      }
+    }
+    sections.push('', lines.join('\n'));
+  }
+
   return sections.join('\n');
 }
 
@@ -223,10 +321,18 @@ export async function reasonOverSession(args: {
   maxTokens?: number;
   provider?: 'anthropic' | 'openai';
 }): Promise<ReasonCallResult> {
-  const { apiKey, model = GPT_4O_MINI, context, maxTokens = 2048, provider = 'openai' } = args;
+  const {
+    apiKey,
+    model = DEFAULT_REASONING_MODEL,
+    context,
+    // 4096 leaves room for chain-of-thought-ish output when the AI
+    // produces 3-5 detailed task descriptions.
+    maxTokens = 4096,
+    provider = 'openai',
+  } = args;
 
   if (provider === 'openai') {
-    return reasonOverSessionOpenAI({ apiKey, model: model || GPT_4O_MINI, context, maxTokens });
+    return reasonOverSessionOpenAI({ apiKey, model: model || DEFAULT_REASONING_MODEL, context, maxTokens });
   }
 
   return reasonOverSessionAnthropic({ apiKey, model, context, maxTokens });
@@ -312,7 +418,7 @@ async function reasonOverSessionOpenAI(args: {
   context: ReasonContext;
   maxTokens: number;
 }): Promise<ReasonCallResult> {
-  const { apiKey, model = GPT_4O_MINI, context, maxTokens = 2048 } = args;
+  const { apiKey, model = DEFAULT_REASONING_MODEL, context, maxTokens = 4096 } = args;
 
   const client = getOpenAIClient(apiKey);
   const userBody = buildSessionBody(context);
@@ -358,6 +464,7 @@ async function reasonOverSessionOpenAI(args: {
   const costUsd = computeOpenAICostUsd({
     promptTokens: usage.prompt_tokens,
     completionTokens: usage.completion_tokens,
+    model,
   });
 
   return {
