@@ -15,6 +15,13 @@
       "when": 1776902759208,
       "tag": "0001_sudden_cassandra_nova",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777167882527,
+      "tag": "0002_tan_slapstick",
+      "breakpoints": true
     }
   ]
 }
