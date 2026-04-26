@@ -35,7 +35,14 @@ export function startQrServer(token: string): Server {
 
     if (url.pathname === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, hasQr: !!_currentQr }));
+      res.end(
+        JSON.stringify({
+          ok: true,
+          hasQr: !!_currentQr,
+          uptimeSec: Math.round(process.uptime()),
+          startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+        }),
+      );
       return;
     }
 
@@ -48,6 +55,21 @@ export function startQrServer(token: string): Server {
     if (url.pathname === '/qr.txt') {
       res.writeHead(200, { 'content-type': 'text/plain' });
       res.end(_currentQr ?? '(no QR yet — bridge still handshaking)');
+      return;
+    }
+
+    // POST /restart — process.exit(0) so Fly's restart policy spins a
+    // fresh container with a fresh Baileys WebSocket. The watchdog
+    // (apps/web/api/admin/wa-watchdog) calls this when it notices no
+    // WhatsApp interactions have arrived for the staleness window,
+    // covering Baileys' silent-disconnect failure mode where
+    // connection.update never fires 'close'.
+    if (url.pathname === '/restart' && req.method === 'POST') {
+      log.warn('restart.requested');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, restarting: true }));
+      // Give the response a tick to flush before exiting.
+      setTimeout(() => process.exit(0), 200);
       return;
     }
 

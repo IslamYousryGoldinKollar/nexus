@@ -61,3 +61,17 @@ jobs:
         run: |
           R=$(curl -s -w '\n[HTTP %{http_code} time %{time_total}s]' --max-time 90 "$BASE/api/cron/sync-approved-injaz" || true)
           echo "$R"
+
+      - name: wa-watchdog
+        # Detects silent Baileys disconnects (bridge thinks it's connected
+        # but no WhatsApp messages have arrived for >30 min) and POSTs
+        # /restart on wa-bridge to spin a fresh container.
+        env:
+          ADMIN_KEY: ${{ secrets.ADMIN_API_KEY }}
+        run: |
+          if [ -z "$ADMIN_KEY" ]; then
+            echo "[wa-watchdog] ADMIN_API_KEY secret not set — skipping"
+            exit 0
+          fi
+          R=$(curl -s -w '\n[HTTP %{http_code} time %{time_total}s]' --max-time 30 "$BASE/api/admin/wa-watchdog?key=$ADMIN_KEY" || true)
+          echo "$R"
