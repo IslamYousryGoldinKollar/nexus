@@ -7,7 +7,6 @@ import {
   insertAttachment,
   interactions as interactionsTable,
   sessions as sessionsTable,
-  sql,
   upsertInteraction,
 } from '@nexus/db';
 import { inngest } from '@nexus/inngest-fns';
