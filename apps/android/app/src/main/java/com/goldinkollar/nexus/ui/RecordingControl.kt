@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -11,14 +12,17 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -28,35 +32,63 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.goldinkollar.nexus.data.SessionStore
 import com.goldinkollar.nexus.recording.RecordingObserverService
 
 /**
- * Inline card that surfaces the Phase 8 (Wave A') call-recording observer
- * service: requests the storage + notification perms it needs, then starts
- * RecordingObserverService.
+ * Inline card that drives the SAF-based recording observer.
  *
- * Untested on Samsung S24 hardware in this session. Server-side
- * `/api/ingest/phone` is still a Phase 0 stub — uploads will 4xx until
- * Phase 1 phone ingest lands; the worker's WorkManager retry backoff
- * means the queue won't lose anything in the meantime.
+ * Workflow:
+ *   1. User taps "Pick folder" → system OpenDocumentTree picker.
+ *   2. We persist the URI permission so it survives reboots, and stash
+ *      the URI in SessionStore.
+ *   3. Tap "Enable" → start RecordingObserverService (foreground).
+ *      The service polls the picked folder every 30s and uploads any
+ *      new audio/video files it finds.
+ *
+ * Notification permission is still required on Android 13+ so the
+ * foreground service can show its persistent notification.
  */
 @Composable
 fun RecordingControl() {
     val context = LocalContext.current
+    val store = remember { SessionStore.shared(context) }
+
     var enabled by remember { mutableStateOf(isServiceRunning(context)) }
-    var permissionsGranted by remember { mutableStateOf(hasAllPermissions(context)) }
+    var folderUri by remember { mutableStateOf(store.recordingFolderUri) }
+    var notifGranted by remember { mutableStateOf(hasNotificationPermission(context)) }
 
     LaunchedEffect(Unit) {
-        permissionsGranted = hasAllPermissions(context)
+        notifGranted = hasNotificationPermission(context)
+        folderUri = store.recordingFolderUri
     }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions(),
-    ) { results ->
-        permissionsGranted = results.values.all { it }
-        if (permissionsGranted) {
+    val pickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree(),
+    ) { uri: Uri? ->
+        if (uri != null) {
+            // Persist the grant so the URI keeps working after a reboot.
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+            try {
+                context.contentResolver.takePersistableUriPermission(uri, flags)
+            } catch (_: SecurityException) {
+                // Some launchers return a one-shot grant; fall back to
+                // ephemeral and let the next picker click re-grant.
+            }
+            store.setRecordingFolderUri(uri.toString())
+            folderUri = uri.toString()
+        }
+    }
+
+    val notifLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        notifGranted = granted
+        if (granted && folderUri != null) {
             startRecordingService(context)
             enabled = true
         }
@@ -75,22 +107,51 @@ fun RecordingControl() {
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                "Watches /storage/emulated/0/Cube Call Recorder/all and similar dirs " +
-                    "for new recordings, then uploads them to Nexus for transcription.",
+                "Pick the folder where your call-recorder app (Cube ACR, " +
+                    "Samsung Recorder, etc.) saves its files. Nexus will watch " +
+                    "the folder and upload new recordings automatically.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline,
             )
             Spacer(Modifier.height(12.dp))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    "Folder: ",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+                Text(
+                    text = folderUri?.let { friendlyFolderLabel(it) } ?: "— not picked —",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = true),
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { pickerLauncher.launch(null) }) {
+                    Text(if (folderUri == null) "Pick folder" else "Change folder")
+                }
+
                 if (!enabled) {
-                    Button(onClick = {
-                        if (permissionsGranted) {
-                            startRecordingService(context)
-                            enabled = true
-                        } else {
-                            permissionLauncher.launch(requiredPermissions().toTypedArray())
-                        }
-                    }) {
+                    Button(
+                        enabled = folderUri != null,
+                        onClick = {
+                            if (!notifGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            } else {
+                                startRecordingService(context)
+                                enabled = true
+                            }
+                        },
+                    ) {
                         Text("Enable")
                     }
                 } else {
@@ -101,36 +162,46 @@ fun RecordingControl() {
                         Text("Disable")
                     }
                 }
+
+                if (folderUri != null) {
+                    TextButton(onClick = {
+                        store.setRecordingFolderUri(null)
+                        folderUri = null
+                        if (enabled) {
+                            stopRecordingService(context)
+                            enabled = false
+                        }
+                    }) {
+                        Text("Clear")
+                    }
+                }
+            }
+
+            if (folderUri == null) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Tip: most recorder apps save under " +
+                        "\"Cube Call Recorder\", \"Recordings\", or " +
+                        "\"Recorder\" inside your phone's Internal storage.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AssistChipDefaults.assistChipColors().labelColor,
+                )
             }
         }
     }
 }
 
-private fun requiredPermissions(): List<String> {
-    val perms = mutableListOf<String>()
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        perms += Manifest.permission.READ_MEDIA_AUDIO
-        perms += Manifest.permission.POST_NOTIFICATIONS
-    } else {
-        @Suppress("DEPRECATION")
-        perms += Manifest.permission.READ_EXTERNAL_STORAGE
-    }
-    return perms
+private fun hasNotificationPermission(context: Context): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
+    return ContextCompat.checkSelfPermission(
+        context, Manifest.permission.POST_NOTIFICATIONS,
+    ) == PackageManager.PERMISSION_GRANTED
 }
 
-private fun hasAllPermissions(context: Context): Boolean =
-    requiredPermissions().all {
-        ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-    }
-
 private fun isServiceRunning(context: Context): Boolean {
-    // Best-effort lookup. ActivityManager.getRunningServices is deprecated
-    // for non-owned services on API 26+, but our own service is always
-    // visible. Used for UI-state hydration only.
     @Suppress("DEPRECATION")
-    val am =
-        context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
-            ?: return false
+    val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+        ?: return false
     @Suppress("DEPRECATION")
     return am.getRunningServices(Int.MAX_VALUE).any {
         it.service.className == RecordingObserverService::class.java.name
@@ -143,6 +214,22 @@ private fun startRecordingService(context: Context) {
         context.startForegroundService(intent)
     } else {
         context.startService(intent)
+    }
+}
+
+/**
+ * Decode the tree-URI's last path segment back into a human-readable
+ * folder name. Tree URIs look like:
+ *   content://com.android.externalstorage.documents/tree/primary%3ACube%20Call%20Recorder%2Fall
+ * → "primary:Cube Call Recorder/all"
+ */
+private fun friendlyFolderLabel(uriStr: String): String {
+    return try {
+        val uri = Uri.parse(uriStr)
+        val raw = uri.lastPathSegment ?: return uriStr
+        Uri.decode(raw)
+    } catch (_: Throwable) {
+        uriStr
     }
 }
 

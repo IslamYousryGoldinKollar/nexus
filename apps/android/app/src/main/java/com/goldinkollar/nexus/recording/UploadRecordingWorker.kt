@@ -1,6 +1,9 @@
 package com.goldinkollar.nexus.recording
 
 import android.content.Context
+import android.net.Uri
+import android.provider.DocumentsContract
+import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.goldinkollar.nexus.data.SessionStore
@@ -13,23 +16,32 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.http.ContentDisposition
+import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
-import io.ktor.http.ContentDisposition
-import io.ktor.http.ContentType
 import java.io.File
+import java.io.InputStream
 
 /**
- * WorkManager job that uploads one recording file to /api/ingest/phone.
+ * WorkManager job that uploads one recording to /api/ingest/phone.
  *
- * Backoff: WorkManager applies exponential backoff (default 30s/1m/2m/...)
- * on Result.retry(). We retry on network errors and 5xx; permanent
- * failures (4xx) → Result.failure() so the queue clears.
+ * Two input modes (use exactly one):
+ *   - KEY_DOC_URI + KEY_TREE_URI: SAF-picked file (preferred path).
+ *     Bytes read via ContentResolver; metadata pulled from the
+ *     DocumentsContract row.
+ *   - KEY_FILE_PATH: legacy raw filesystem path. Kept for the old
+ *     FileObserver flow on devices where the user pinned a public
+ *     folder before SAF migration.
  *
- * On success the file is left in place (the recorder app manages
- * retention). Future iteration: tag uploaded files via xattr or a
- * shadow-tracker DB so we never re-upload after a service restart.
+ * Backoff: WorkManager applies exponential backoff (default
+ * 30s/1m/2m/...) on Result.retry(). We retry on network errors and
+ * 5xx; permanent failures (4xx) → Result.failure() so the queue clears.
+ *
+ * Idempotency on success: the document id is added to
+ * [SessionStore.markRecordingSeen] so the polling observer skips it
+ * forever after, even across service restarts.
  */
 class UploadRecordingWorker(
     appContext: Context,
@@ -37,71 +49,212 @@ class UploadRecordingWorker(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
-        val path = inputData.getString(KEY_FILE_PATH) ?: return Result.failure()
-        val file = File(path)
-        if (!file.exists() || file.length() == 0L) return Result.failure()
-
         val store = SessionStore.shared(applicationContext)
         val apiKey = store.apiKey ?: return Result.retry()
 
+        val docUriStr = inputData.getString(KEY_DOC_URI)
+        return if (docUriStr != null) {
+            uploadFromContentUri(store, apiKey, Uri.parse(docUriStr))
+        } else {
+            val path = inputData.getString(KEY_FILE_PATH) ?: return Result.failure()
+            uploadFromFile(store, apiKey, File(path))
+        }
+    }
+
+    private suspend fun uploadFromContentUri(
+        store: SessionStore,
+        apiKey: String,
+        docUri: Uri,
+    ): Result {
+        val resolver = applicationContext.contentResolver
+        val meta = queryDocumentMeta(docUri) ?: run {
+            Log.w(TAG, "could not read doc meta for $docUri")
+            return Result.failure()
+        }
+        if (meta.size < 1024L) return Result.failure()
+
+        val bytes = try {
+            resolver.openInputStream(docUri)?.use(InputStream::readBytes)
+        } catch (t: Throwable) {
+            Log.w(TAG, "openInputStream failed for $docUri", t)
+            null
+        } ?: return Result.retry()
+
+        return doUpload(
+            store = store,
+            apiKey = apiKey,
+            audioBytes = bytes,
+            filename = meta.displayName,
+            mime = meta.mimeType,
+            occurredEpochMs = meta.lastModified,
+            onSuccess = { store.markRecordingSeen(meta.documentId) },
+        )
+    }
+
+    private suspend fun uploadFromFile(
+        store: SessionStore,
+        apiKey: String,
+        file: File,
+    ): Result {
+        if (!file.exists() || file.length() == 0L) return Result.failure()
+        return doUpload(
+            store = store,
+            apiKey = apiKey,
+            audioBytes = file.readBytes(),
+            filename = file.name,
+            mime = file.guessMime(),
+            occurredEpochMs = file.lastModified(),
+            onSuccess = { /* no idempotency tag — legacy path */ },
+        )
+    }
+
+    private suspend fun doUpload(
+        store: SessionStore,
+        apiKey: String,
+        audioBytes: ByteArray,
+        filename: String,
+        mime: ContentType,
+        occurredEpochMs: Long,
+        onSuccess: () -> Unit,
+    ): Result {
         val client = HttpClient(OkHttp) {
             install(HttpTimeout) {
-                requestTimeoutMillis = 60_000
+                requestTimeoutMillis = 120_000
                 connectTimeoutMillis = 10_000
             }
         }
         return runCatching {
-            val resp: HttpResponse = client.post(store.baseUrl.trimEnd('/') + "/api/ingest/phone") {
+            val resp: HttpResponse = client.post(
+                store.baseUrl.trimEnd('/') + "/api/ingest/phone",
+            ) {
                 header(HttpHeaders.Authorization, "Bearer $apiKey")
                 setBody(
                     MultiPartFormDataContent(
                         formData {
                             append(
                                 key = "audio",
-                                value = file.readBytes(),
+                                value = audioBytes,
                                 headers = headersOf(
-                                    HttpHeaders.ContentType to listOf(file.mimeType().toString()),
+                                    HttpHeaders.ContentType to listOf(mime.toString()),
                                     HttpHeaders.ContentDisposition to listOf(
                                         ContentDisposition.File
                                             .withParameter("name", "audio")
-                                            .withParameter("filename", file.name)
+                                            .withParameter("filename", filename)
                                             .toString(),
                                     ),
                                 ),
                             )
-                            append("metadata", buildMetadata(file))
+                            append("metadata", buildMetadata(filename, occurredEpochMs))
                         },
                     ),
                 )
             }
-            if (resp.status.value in 200..299) Result.success()
-            else if (resp.status.value >= 500 || resp.status == HttpStatusCode.RequestTimeout) Result.retry()
-            else Result.failure()
-        }.getOrElse { Result.retry() }
-    }
-
-    private fun buildMetadata(file: File): String {
-        val occurredMs = file.lastModified()
-        // Minimal MVP — counterparty parsed from filename when possible
-        // (most recorders embed +countryCodeNumber in the filename).
-        val counterparty = Regex("\\+?\\d{7,15}").find(file.name)?.value?.let {
-            if (it.startsWith("+")) it else "+$it"
+            when {
+                resp.status.value in 200..299 -> {
+                    onSuccess()
+                    Result.success()
+                }
+                resp.status.value >= 500 || resp.status == HttpStatusCode.RequestTimeout -> Result.retry()
+                else -> Result.failure()
+            }
+        }.getOrElse {
+            Log.w(TAG, "upload failed; will retry", it)
+            Result.retry()
         }
-        return """{"counterparty":${counterparty?.let { "\"$it\"" } ?: "null"},"direction":"unknown","occurredAt":"${java.time.Instant.ofEpochMilli(occurredMs)}"}"""
     }
 
-    private fun File.mimeType(): ContentType {
-        return when (extension.lowercase()) {
+    private data class DocMeta(
+        val documentId: String,
+        val displayName: String,
+        val mimeType: ContentType,
+        val size: Long,
+        val lastModified: Long,
+    )
+
+    private fun queryDocumentMeta(docUri: Uri): DocMeta? {
+        val resolver = applicationContext.contentResolver
+        val cursor = resolver.query(
+            docUri,
+            arrayOf(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE,
+                DocumentsContract.Document.COLUMN_SIZE,
+                DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+            ),
+            null, null, null,
+        ) ?: return null
+        return cursor.use { c ->
+            if (!c.moveToFirst()) return null
+            val name = c.getString(1) ?: return null
+            DocMeta(
+                documentId = c.getString(0) ?: return null,
+                displayName = name,
+                mimeType = mimeFromString(c.getString(2), name),
+                size = if (c.isNull(3)) 0L else c.getLong(3),
+                lastModified = if (c.isNull(4)) System.currentTimeMillis() else c.getLong(4),
+            )
+        }
+    }
+
+    private fun mimeFromString(declared: String?, filename: String): ContentType {
+        if (declared != null && declared != "application/octet-stream") {
+            return runCatching { ContentType.parse(declared) }.getOrNull()
+                ?: extensionMime(filename)
+        }
+        return extensionMime(filename)
+    }
+
+    private fun extensionMime(filename: String): ContentType =
+        when (filename.substringAfterLast('.', "").lowercase()) {
             "m4a", "mp4" -> ContentType.parse("audio/mp4")
             "mp3" -> ContentType.parse("audio/mpeg")
             "wav" -> ContentType.parse("audio/wav")
-            "ogg" -> ContentType.parse("audio/ogg")
+            "ogg", "opus" -> ContentType.parse("audio/ogg")
             "amr" -> ContentType.parse("audio/amr")
+            "aac" -> ContentType.parse("audio/aac")
+            "3gp" -> ContentType.parse("audio/3gpp")
+            "flac" -> ContentType.parse("audio/flac")
             else -> ContentType.parse("application/octet-stream")
+        }
+
+    private fun File.guessMime(): ContentType = extensionMime(name)
+
+    private fun buildMetadata(filename: String, occurredMs: Long): String {
+        // Most recorder apps embed the counterparty number in the
+        // filename ("+201234567890_call_2026-04-26.m4a"). Fall back to
+        // null when no number is present — server validation requires
+        // counterparty + direction + occurredAt + durationSec + callId,
+        // so we generate a deterministic callId from the filename so
+        // re-uploads dedupe server-side via UNIQUE(channel, source_message_id).
+        val counterparty = Regex("\\+?\\d{7,15}").find(filename)?.value?.let {
+            if (it.startsWith("+")) it else "+$it"
+        }
+        val callId = java.util.UUID.nameUUIDFromBytes(
+            filename.toByteArray(Charsets.UTF_8),
+        ).toString()
+        val occurredIso = java.time.Instant.ofEpochMilli(occurredMs).toString()
+        return buildString {
+            append('{')
+            append("\"counterparty\":")
+            append(counterparty?.let { "\"$it\"" } ?: "null")
+            append(",\"direction\":\"unknown\"")
+            append(",\"occurredAt\":\"")
+            append(occurredIso)
+            append('"')
+            append(",\"durationSec\":0")
+            append(",\"callId\":\"")
+            append(callId)
+            append('"')
+            append(",\"recorder\":\"saf-picker\"")
+            append('}')
         }
     }
 
     companion object {
+        private const val TAG = "RecUpload"
         const val KEY_FILE_PATH = "file_path"
+        const val KEY_DOC_URI = "doc_uri"
+        const val KEY_TREE_URI = "tree_uri"
     }
 }

@@ -13,7 +13,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Phase 8 — call-recording observer.
-         READ_MEDIA_AUDIO covers Android 13+; READ_EXTERNAL_STORAGE for older. -->
+         No storage permissions needed: the user picks the recordings
+         folder via Storage Access Framework (OpenDocumentTree) and we
+         hold a persisted URI grant. READ_MEDIA_AUDIO is kept as a
+         fallback for the legacy FileObserver path on older builds. -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"

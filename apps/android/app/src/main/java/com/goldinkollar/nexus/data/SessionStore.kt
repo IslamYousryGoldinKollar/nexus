@@ -66,6 +66,39 @@ class SessionStore private constructor(context: Context) {
     val baseUrl: String
         get() = prefs.getString(KEY_BASE_URL, DEFAULT_BASE_URL) ?: DEFAULT_BASE_URL
 
+    /**
+     * Tree URI of the folder the user picked via SAF (Storage Access
+     * Framework). The recording observer service watches this folder
+     * for new audio files and uploads them. Null = no folder picked
+     * yet → the service refuses to start.
+     */
+    val recordingFolderUri: String?
+        get() = prefs.getString(KEY_RECORDING_FOLDER_URI, null)
+
+    fun setRecordingFolderUri(uri: String?) {
+        prefs.edit()
+            .apply {
+                if (uri == null) remove(KEY_RECORDING_FOLDER_URI)
+                else putString(KEY_RECORDING_FOLDER_URI, uri)
+            }
+            .apply()
+    }
+
+    /**
+     * Set of `documentId` strings we've already uploaded. Used by the
+     * polling observer to skip files that already shipped — without
+     * this we'd re-upload the entire folder on every service restart.
+     */
+    fun seenRecordingDocumentIds(): Set<String> =
+        prefs.getStringSet(KEY_SEEN_RECORDING_IDS, emptySet()) ?: emptySet()
+
+    fun markRecordingSeen(documentId: String) {
+        val current = seenRecordingDocumentIds().toMutableSet()
+        if (current.add(documentId)) {
+            prefs.edit().putStringSet(KEY_SEEN_RECORDING_IDS, current).apply()
+        }
+    }
+
     fun store(apiKey: String, userId: String, deviceId: String) {
         prefs.edit()
             .putString(KEY_API, apiKey)
@@ -97,6 +130,8 @@ class SessionStore private constructor(context: Context) {
         private const val KEY_USER_ID = "user_id"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_BASE_URL = "base_url"
+        private const val KEY_RECORDING_FOLDER_URI = "recording_folder_uri"
+        private const val KEY_SEEN_RECORDING_IDS = "seen_recording_ids"
         // Vercel canonical alias. nexus.theoffsight.com isn't in DNS yet;
         // switch to it once the CNAME is added at the registrar.
         private const val DEFAULT_BASE_URL = "https://nexus-beta-coral.vercel.app"
