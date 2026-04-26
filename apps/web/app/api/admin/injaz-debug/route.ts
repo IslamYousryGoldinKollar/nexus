@@ -4,6 +4,7 @@ import {
   listInjazParties,
   listInjazUsers,
   listInjazProjects,
+  callInjazMcpToolRaw,
 } from '@nexus/services';
 import { log } from '@/lib/logger';
 
@@ -14,9 +15,11 @@ export const maxDuration = 60;
 /**
  * @deprecated TEMPORARY: surfaces the result of the three Injaz MCP
  * lookups so we can debug why the contact-mapping dropdowns are empty
- * in production. Delete this once the dropdowns work end-to-end.
+ * in production. Pass `?raw=list_parties` (or any tool name) to bypass
+ * the parser and see the actual MCP envelope.
  *
  * GET /api/admin/injaz-debug?key=<ADMIN_API_KEY>
+ * GET /api/admin/injaz-debug?key=...&raw=list_parties
  */
 export async function GET(req: NextRequest) {
   const adminKey = process.env.ADMIN_API_KEY?.trim();
@@ -38,6 +41,31 @@ export async function GET(req: NextRequest) {
   const client = injazClientFromEnv();
   if (!client) {
     return NextResponse.json({ ok: false, env, error: 'injazClientFromEnv returned null' });
+  }
+
+  // ?raw=list_parties → return the raw MCP response envelope so we
+  // can see what shape Injaz actually returns and update the parser.
+  const rawTool = req.nextUrl.searchParams.get('raw');
+  if (rawTool) {
+    const argsStr = req.nextUrl.searchParams.get('args') ?? '{}';
+    let args: Record<string, unknown> = {};
+    try {
+      args = JSON.parse(argsStr);
+    } catch {
+      return NextResponse.json({ error: 'args must be valid JSON' }, { status: 400 });
+    }
+    try {
+      const raw = await callInjazMcpToolRaw(client, rawTool, args);
+      return NextResponse.json({ ok: true, env, tool: rawTool, args, raw });
+    } catch (err) {
+      return NextResponse.json({
+        ok: false,
+        env,
+        tool: rawTool,
+        args,
+        error: (err as Error).message,
+      });
+    }
   }
 
   const out: Record<string, unknown> = { ok: true, env };

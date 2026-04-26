@@ -192,6 +192,19 @@ function extractTaskId(mcpResult: unknown): string | null {
 }
 
 /**
+ * Same MCP call but exposed for debugging — returns the raw result
+ * envelope so a diagnostic endpoint can dump the actual shape Injaz
+ * returns for a given tool. NOT for production use.
+ */
+export async function callInjazMcpToolRaw(
+  opts: InjazClientOptions,
+  toolName: string,
+  args: Record<string, unknown> = {},
+): Promise<unknown> {
+  return mcpToolsCall(mcpSseUrl(opts), opts.apiKey, toolName, args);
+}
+
+/**
  * Minimal MCP-over-SSE client. Opens an SSE connection, performs the
  * MCP handshake, calls a single tool, and tears down. Suited for
  * Vercel serverless one-shot invocations where keeping a long-lived
