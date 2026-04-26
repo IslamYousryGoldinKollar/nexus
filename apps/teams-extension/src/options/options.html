@@ -2,35 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Nexus Teams Bridge — Options</title>
+  <title>Nexus Meeting Recorder — Options</title>
   <style>
-    body { font: 14px system-ui, sans-serif; max-width: 480px; margin: 24px auto; padding: 0 16px; }
+    body { font: 14px system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 480px; margin: 24px auto; padding: 0 16px; color: #0f172a; }
     h1 { font-size: 18px; margin-bottom: 4px; }
-    p.muted { color: #666; margin-top: 0; }
+    p.muted { color: #64748b; margin-top: 0; }
     label { display: block; margin: 16px 0 4px; font-weight: 500; }
-    input[type=text], input[type=password] { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-    button { margin-top: 16px; padding: 8px 16px; font-size: 14px; background: #0F172A; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
-    .row { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
-    .status { margin-top: 12px; font-size: 12px; color: #16a34a; }
+    input[type=text], input[type=password] { width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; box-sizing: border-box; font: inherit; }
+    button { margin-top: 16px; padding: 9px 16px; font-size: 14px; background: #2563eb; color: #fff; border: 0; border-radius: 6px; cursor: pointer; font-weight: 500; }
+    button:hover { background: #1d4ed8; }
+    .status { margin-top: 12px; font-size: 12px; color: #16a34a; min-height: 1em; }
   </style>
 </head>
 <body>
-  <h1>Nexus Teams Bridge</h1>
-  <p class="muted">Forward MS Teams DMs to your Nexus instance.</p>
+  <h1>Nexus Meeting Recorder</h1>
+  <p class="muted">Records the active tab's audio (Teams · Zoom · Meet) and ships it to your Nexus instance for transcription + task extraction.</p>
 
   <label for="apiBaseUrl">Nexus base URL</label>
-  <input id="apiBaseUrl" type="text" placeholder="https://nexus.goldinkollar.com" />
+  <input id="apiBaseUrl" type="text" placeholder="https://nexus-beta-coral.vercel.app" />
 
-  <label for="apiKey">Teams ingest API key</label>
-  <input id="apiKey" type="password" placeholder="paste TEAMS_INGEST_API_KEY" />
-
-  <label for="selfUserId">Your Teams user id</label>
-  <input id="selfUserId" type="text" placeholder="optional — used to label outbound vs inbound" />
-
-  <div class="row">
-    <input id="enabled" type="checkbox" />
-    <label for="enabled" style="margin: 0; font-weight: 400;">Forwarding enabled</label>
-  </div>
+  <label for="apiKey">Ingest API key</label>
+  <input id="apiKey" type="password" placeholder="MEETING_INGEST_API_KEY or TEAMS_INGEST_API_KEY" />
 
   <button id="save">Save</button>
   <p id="status" class="status"></p>

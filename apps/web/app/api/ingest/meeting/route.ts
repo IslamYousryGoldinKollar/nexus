@@ -39,6 +39,37 @@ function timingSafeHexEq(a: string, b: string): boolean {
   return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
+function verifyHmac(req: NextRequest, raw: Buffer): boolean {
+  const secret = process.env.WA_BRIDGE_HMAC_SECRET;
+  if (!secret) return false;
+  const sig = req.headers.get('x-nexus-signature') ?? '';
+  const match = sig.match(/^sha256=([a-f0-9]{64})$/i);
+  if (!match) return false;
+  const expected = createHmac('sha256', secret).update(raw).digest('hex');
+  return timingSafeHexEq(expected, match[1]!);
+}
+
+function verifyBearer(req: NextRequest): boolean {
+  const provided = (req.headers.get('authorization') ?? '').trim();
+  if (!provided.startsWith('Bearer ')) return false;
+  const token = provided.slice('Bearer '.length).trim();
+  if (!token) return false;
+  // Two acceptable keys: a dedicated MEETING_INGEST_API_KEY (preferred)
+  // or the existing TEAMS_INGEST_API_KEY (backward-compat with the
+  // legacy DM-scraper extension's stored secret).
+  for (const envName of ['MEETING_INGEST_API_KEY', 'TEAMS_INGEST_API_KEY']) {
+    const want = process.env[envName]?.trim();
+    if (!want) continue;
+    if (
+      token.length === want.length &&
+      timingSafeEqual(Buffer.from(token), Buffer.from(want))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function POST(req: NextRequest) {
   return withRequestId(req, async () => {
     const rateLimit = checkRateLimit(req, webhookRateLimiter);
@@ -50,29 +81,20 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const secret = process.env.WA_BRIDGE_HMAC_SECRET;
-    if (!secret) {
-      log.error('meeting.webhook.no_secret');
-      return NextResponse.json(
-        { ok: false, error: 'signature_verification_failed', channel: 'meeting' },
-        { status: 200 },
-      );
-    }
-
     const raw = Buffer.from(await req.arrayBuffer());
-    const sig = req.headers.get('x-nexus-signature') ?? '';
-    const match = sig.match(/^sha256=([a-f0-9]{64})$/i);
-    if (!match) {
-      log.warn('meeting.signature.malformed', { bodyLen: raw.length });
-      return NextResponse.json(
-        { ok: false, error: 'signature_verification_failed', channel: 'meeting' },
-        { status: 200 },
-      );
-    }
-    const expected = createHmac('sha256', secret).update(raw).digest('hex');
-    const provided = match[1]!;
-    if (!timingSafeHexEq(expected, provided)) {
-      log.warn('meeting.signature.invalid', { bodyLen: raw.length });
+
+    // Two auth modes (either passing is sufficient):
+    //   1. HMAC-SHA256 of the raw body — for the macOS recorder and
+    //      other backend clients that can safely hold WA_BRIDGE_HMAC_SECRET.
+    //   2. Bearer MEETING_INGEST_API_KEY (or TEAMS_INGEST_API_KEY as
+    //      fallback) — for the Chrome extension. A bearer in the
+    //      extension bundle is acceptable because (a) it's a personal
+    //      install, not Web Store distribution, and (b) it's scoped to
+    //      this single endpoint with strict rate limiting.
+    const hmacOk = verifyHmac(req, raw);
+    const bearerOk = verifyBearer(req);
+    if (!hmacOk && !bearerOk) {
+      log.warn('meeting.auth.failed', { bodyLen: raw.length });
       return NextResponse.json(
         { ok: false, error: 'signature_verification_failed', channel: 'meeting' },
         { status: 200 },

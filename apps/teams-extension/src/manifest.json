@@ -1,36 +1,30 @@
 {
   "manifest_version": 3,
-  "name": "Nexus Teams Bridge",
-  "version": "0.1.1",
-  "description": "Forward MS Teams DMs to Nexus for context aggregation.",
-  "permissions": ["storage", "activeTab", "alarms"],
+  "name": "Nexus Meeting Recorder",
+  "version": "0.2.0",
+  "description": "Record MS Teams / Zoom / Meet meeting audio and ship it to Nexus for transcription + task extraction.",
+  "permissions": ["storage", "activeTab", "alarms", "tabCapture", "offscreen"],
   "host_permissions": [
+    "https://*.teams.microsoft.com/*",
     "https://teams.microsoft.com/*",
     "https://teams.cloud.microsoft/*",
-    "https://*.teams.microsoft.com/*"
+    "https://*.zoom.us/*",
+    "https://meet.google.com/*",
+    "https://nexus-beta-coral.vercel.app/*",
+    "https://*.vercel.app/*",
+    "https://nexus.goldinkollar.com/*"
   ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
-  "content_scripts": [
-    {
-      "matches": [
-        "https://teams.microsoft.com/*",
-        "https://teams.cloud.microsoft/*",
-        "https://*.teams.microsoft.com/*"
-      ],
-      "js": ["content.js"],
-      "run_at": "document_idle"
-    }
-  ],
   "options_ui": {
     "page": "options/options.html",
     "open_in_tab": true
   },
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "Nexus Teams Bridge",
+    "default_title": "Nexus Meeting Recorder",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png"

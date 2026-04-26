@@ -2,19 +2,85 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Nexus Teams Bridge</title>
+  <title>Nexus Meeting Recorder</title>
   <style>
-    body { font: 13px system-ui, sans-serif; width: 240px; padding: 12px; }
-    h1 { margin: 0 0 4px; font-size: 14px; }
-    p.status { color: #16a34a; margin: 8px 0 0; }
-    p.status.off { color: #6b7280; }
-    a { color: #0F172A; }
+    body {
+      font: 13px system-ui, -apple-system, "Segoe UI", sans-serif;
+      width: 280px;
+      padding: 14px;
+      color: #0f172a;
+    }
+    h1 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+    .sub { color: #64748b; font-size: 11px; margin: 0 0 12px; }
+    .row { display: flex; gap: 6px; align-items: center; margin: 8px 0; }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .pill.idle { background: #f1f5f9; color: #475569; }
+    .pill.live { background: #fee2e2; color: #b91c1c; }
+    .pill.uploading { background: #dbeafe; color: #1d4ed8; }
+    .pill.ok { background: #dcfce7; color: #166534; }
+    .pill.err { background: #fee2e2; color: #b91c1c; }
+    .timer { font-variant-numeric: tabular-nums; font-weight: 500; }
+    button {
+      width: 100%;
+      padding: 9px 12px;
+      border: 0;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      margin-top: 4px;
+    }
+    button.start { background: #2563eb; color: #fff; }
+    button.start:hover { background: #1d4ed8; }
+    button.stop { background: #dc2626; color: #fff; }
+    button.stop:hover { background: #b91c1c; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .footer { margin-top: 12px; font-size: 11px; color: #64748b; display: flex; justify-content: space-between; }
+    .footer a { color: #2563eb; text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
+    .err {
+      margin-top: 8px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      background: #fef2f2;
+      color: #b91c1c;
+      font-size: 11px;
+      word-break: break-word;
+    }
+    .ok {
+      margin-top: 8px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      background: #f0fdf4;
+      color: #166534;
+      font-size: 11px;
+    }
   </style>
 </head>
 <body>
-  <h1>Nexus Teams Bridge</h1>
-  <p id="status" class="status">…</p>
-  <p style="margin-top: 8px;"><a href="#" id="open-options">Open options →</a></p>
+  <h1>Nexus Meeting Recorder</h1>
+  <p class="sub">Captures the active tab's audio (Teams · Zoom · Meet) and ships it for transcription + tasks.</p>
+
+  <div class="row">
+    <span id="state" class="pill idle">Idle</span>
+    <span id="timer" class="timer"></span>
+  </div>
+
+  <button id="action" class="start">Start recording</button>
+
+  <div id="msg"></div>
+
+  <div class="footer">
+    <a href="#" id="open-options">Options</a>
+    <a href="#" id="open-tasks">Approvals →</a>
+  </div>
+
   <script type="module" src="popup.js"></script>
 </body>
 </html>

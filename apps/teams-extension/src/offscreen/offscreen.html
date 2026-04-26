@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Nexus Meeting Recorder · Offscreen</title>
+</head>
+<body>
+  <!--
+    Hidden offscreen document. MV3 service workers can't hold MediaStreams,
+    so we delegate the actual MediaRecorder lifecycle to this page.
+    Created on demand by background.ts via chrome.offscreen.createDocument.
+  -->
+  <script type="module" src="offscreen/offscreen.js"></script>
+</body>
+</html>

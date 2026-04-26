@@ -16,9 +16,9 @@ await mkdir(DIST, { recursive: true });
 await build({
   entryPoints: [
     resolve(SRC, 'background.ts'),
-    resolve(SRC, 'content.ts'),
     resolve(SRC, 'options/options.ts'),
     resolve(SRC, 'popup/popup.ts'),
+    resolve(SRC, 'offscreen/offscreen.ts'),
   ],
   bundle: true,
   format: 'esm',
@@ -40,6 +40,15 @@ for (const html of ['options/options.html', 'popup/popup.html']) {
   if (existsSync(resolve(SRC, html))) {
     await copyFile(resolve(SRC, html), target);
   }
+}
+
+// chrome.offscreen.createDocument({ url: 'offscreen.html' }) resolves
+// against the extension root, so the HTML lives at dist/offscreen.html
+// (not nested under dist/offscreen/) — and references its bundled JS
+// via the relative path "offscreen/offscreen.js" inside the script tag.
+const offscreenHtmlSrc = resolve(SRC, 'offscreen/offscreen.html');
+if (existsSync(offscreenHtmlSrc)) {
+  await copyFile(offscreenHtmlSrc, resolve(DIST, 'offscreen.html'));
 }
 
 // Copy icons referenced by manifest.json (action.default_icon + icons.*).

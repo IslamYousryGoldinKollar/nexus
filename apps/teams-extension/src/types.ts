@@ -1,32 +1,51 @@
 /**
- * Wire-format payload pushed by the content script to the background
- * worker, and from background to /api/ingest/teams.
+ * Extension config persisted in chrome.storage.sync.
  *
- * Mirrors `apps/web/lib/channels/teams/schema.ts:teamsIngestSchema`.
+ * `apiBaseUrl` + `apiKey` point at the Nexus deployment. The server's
+ * /api/ingest/meeting endpoint accepts both HMAC (for backend clients)
+ * and Bearer (for this in-browser client) auth — we use the Bearer
+ * path because the extension can't safely hold an HMAC secret in its
+ * bundle.
  */
-export interface TeamsIngestPayload {
-  messageId: string;
-  fromUserId: string;
-  fromName?: string;
-  conversationId: string;
-  direction: 'inbound' | 'outbound';
-  text?: string;
-  occurredAt: string; // ISO 8601
-  attachmentUrl?: string;
-  attachmentMime?: string;
-}
-
 export interface ExtensionConfig {
   apiBaseUrl: string;
   apiKey: string;
-  selfUserId: string; // user.id of the admin running the extension; used
-                       // to decide direction
   enabled: boolean;
 }
 
 export const DEFAULT_CONFIG: ExtensionConfig = {
-  apiBaseUrl: 'https://nexus.goldinkollar.com',
+  apiBaseUrl: 'https://nexus-beta-coral.vercel.app',
   apiKey: '',
-  selfUserId: '',
-  enabled: false,
+  enabled: true,
 };
+
+/**
+ * Messages exchanged between popup ↔ background SW ↔ offscreen page.
+ * Discriminated by `type`. Returned values flow back via the same
+ * sendResponse channel; nothing is fire-and-forget.
+ */
+export type ExtMessage =
+  | { type: 'START_RECORDING'; tabId: number }
+  | { type: 'STOP_RECORDING' }
+  | { type: 'GET_STATUS' }
+  | {
+      type: 'STATUS';
+      recording: boolean;
+      durationMs: number;
+      uploading: boolean;
+      lastError?: string;
+      lastInteractionId?: string;
+    }
+  // SW → offscreen
+  | { type: 'OFFSCREEN_START'; streamId: string; startedAt: string }
+  | { type: 'OFFSCREEN_STOP' }
+  // offscreen → SW
+  | {
+      type: 'OFFSCREEN_RESULT';
+      ok: true;
+      mimeType: string;
+      bytesBase64: string;
+      startedAt: string;
+      endedAt: string;
+    }
+  | { type: 'OFFSCREEN_RESULT'; ok: false; error: string };

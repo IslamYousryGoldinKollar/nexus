@@ -1,9 +1,8 @@
 // src/types.ts
 var DEFAULT_CONFIG = {
-  apiBaseUrl: "https://nexus.goldinkollar.com",
+  apiBaseUrl: "https://nexus-beta-coral.vercel.app",
   apiKey: "",
-  selfUserId: "",
-  enabled: false
+  enabled: true
 };
 
 // src/storage.ts
@@ -22,15 +21,12 @@ async function bootstrap() {
   const cfg = await loadConfig();
   $("apiBaseUrl").value = cfg.apiBaseUrl;
   $("apiKey").value = cfg.apiKey;
-  $("selfUserId").value = cfg.selfUserId;
-  $("enabled").checked = cfg.enabled;
 }
 document.getElementById("save")?.addEventListener("click", async () => {
   await saveConfig({
     apiBaseUrl: $("apiBaseUrl").value.trim(),
     apiKey: $("apiKey").value.trim(),
-    selfUserId: $("selfUserId").value.trim(),
-    enabled: $("enabled").checked
+    enabled: true
   });
   const s = document.getElementById("status");
   if (s) {
