@@ -10,12 +10,16 @@
       "schedule": "*/2 * * * *"
     },
     {
-      "path": "/api/cron/sync-approved-injaz",
+      "path": "/api/cron/auto-transcribe",
       "schedule": "*/2 * * * *"
     },
     {
       "path": "/api/cron/auto-reason",
-      "schedule": "*/10 * * * *"
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/sync-approved-injaz",
+      "schedule": "*/2 * * * *"
     },
     {
       "path": "/api/cron/sync-inngest",
