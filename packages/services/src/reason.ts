@@ -46,7 +46,16 @@ export interface ReasonContext {
 export const proposedTaskSchema = z.object({
   title: z.string().min(1).max(200),
   description: z.string().min(1).max(4000),
-  priority: z.enum(['low', 'med', 'high', 'urgent']).default('med'),
+  priority: z
+    .preprocess((v) => {
+      if (typeof v !== 'string') return v;
+      const lower = v.toLowerCase();
+      // The model occasionally emits longer synonyms despite the prompt.
+      if (lower === 'medium' || lower === 'normal' || lower === 'mid') return 'med';
+      if (lower === 'critical' || lower === 'p0') return 'urgent';
+      return lower;
+    }, z.enum(['low', 'med', 'high', 'urgent']))
+    .default('med'),
   assigneeGuess: z.string().nullable().optional(),
   dueDateGuess: z.string().datetime().nullable().optional(),
   rationale: z.string().min(1).max(2000),
