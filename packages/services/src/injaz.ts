@@ -40,6 +40,7 @@ export interface InjazTaskInput {
   priority?: 'low' | 'med' | 'high' | 'urgent';
   dueDate?: string | null;       // ISO 8601
   assignee?: string | null;      // freeform name or email
+  projectName?: string | null;   // Injaz project — implicitly carries the client
   externalRefId?: string;        // our proposed_task.id; for idempotency
   source?: string;               // 'nexus'
 }
@@ -125,6 +126,7 @@ export async function createInjazTask(
   if (task.priority) args.priority = mapPriorityToInjaz(task.priority);
   if (task.dueDate) args.dueDate = task.dueDate;
   if (task.assignee) args.assigneeName = task.assignee;
+  if (task.projectName) args.projectName = task.projectName;
 
   const sseUrl = mcpSseUrl(opts);
   const result = await mcpToolsCall(sseUrl, opts.apiKey, 'create_task', args);
@@ -333,6 +335,92 @@ async function mcpToolsCall(
     // Best-effort close.
     void reader.cancel().catch(() => undefined);
   }
+}
+
+export interface InjazParty {
+  name: string;
+  type: 'CLIENT' | 'VENDOR' | 'EMPLOYEE' | 'OWNER' | 'OTHER';
+  email: string | null;
+  phone: string | null;
+  hasVat?: boolean;
+  vatRate?: string;
+}
+
+export interface InjazUser {
+  name: string;
+  email: string;
+  role: string;
+  approvalStatus: string;
+}
+
+export interface InjazProject {
+  name: string;
+  status: string;
+  client: string;
+  budget: number | null;
+}
+
+/**
+ * MCP `list_parties` — clients/vendors/employees in Injaz. List
+ * responses don't expose stable IDs, so callers identify rows by
+ * `name`. The MCP response is wrapped in a `content[0].text` JSON
+ * blob; this helper unwraps it.
+ */
+export async function listInjazParties(
+  opts: InjazClientOptions,
+  type?: InjazParty['type'],
+): Promise<InjazParty[]> {
+  const args = type ? { type } : {};
+  const result = await mcpToolsCall(mcpSseUrl(opts), opts.apiKey, 'list_parties', args);
+  return parseListResult<InjazParty>(result);
+}
+
+export async function listInjazUsers(opts: InjazClientOptions): Promise<InjazUser[]> {
+  const result = await mcpToolsCall(mcpSseUrl(opts), opts.apiKey, 'list_users', {});
+  return parseListResult<InjazUser>(result);
+}
+
+export async function listInjazProjects(
+  opts: InjazClientOptions,
+  status?: 'ACTIVE' | 'COMPLETED' | 'ON_HOLD' | 'CANCELLED',
+): Promise<InjazProject[]> {
+  const args = status ? { status } : {};
+  const result = await mcpToolsCall(mcpSseUrl(opts), opts.apiKey, 'list_projects', args);
+  return parseListResult<InjazProject>(result);
+}
+
+/**
+ * MCP tool results come back as `{ content: [{type:'text', text:'<JSON>'}] }`.
+ * The text payload is the actual array we want; this helper handles
+ * both that shape and the rare case where structuredContent is set.
+ */
+function parseListResult<T>(mcpResult: unknown): T[] {
+  if (!mcpResult || typeof mcpResult !== 'object') return [];
+  const r = mcpResult as Record<string, unknown>;
+  const sc = r.structuredContent;
+  if (Array.isArray(sc)) return sc as T[];
+  const content = r.content as Array<{ type?: string; text?: string }> | undefined;
+  if (Array.isArray(content)) {
+    for (const c of content) {
+      if (c.type === 'text' && typeof c.text === 'string') {
+        try {
+          const parsed = JSON.parse(c.text);
+          if (Array.isArray(parsed)) return parsed as T[];
+          // Some MCP servers wrap the array in `{ items: [...] }` or `{ data: [...] }`.
+          if (parsed && typeof parsed === 'object') {
+            for (const k of ['items', 'data', 'results']) {
+              if (Array.isArray((parsed as Record<string, unknown>)[k])) {
+                return (parsed as Record<string, unknown>)[k] as T[];
+              }
+            }
+          }
+        } catch {
+          /* not JSON; ignore */
+        }
+      }
+    }
+  }
+  return [];
 }
 
 export async function getInjazTask(

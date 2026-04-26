@@ -5,6 +5,7 @@ import { Check, Loader2, Pencil, X } from 'lucide-react';
 import type { ProposedTask } from '@nexus/db';
 import { StateBadge } from '@/components/ui/state-badge';
 import { approveTask, editAndApproveTask, rejectTask } from './actions';
+import AssigneePicker from './assignee-picker';
 
 /**
  * One proposed-task card. Three modes:
@@ -17,6 +18,11 @@ import { approveTask, editAndApproveTask, rejectTask } from './actions';
 export function TaskCard({ task }: { task: ProposedTask }) {
   const [mode, setMode] = useState<'view' | 'edit' | 'rejecting'>('view');
   const [pending, startTransition] = useTransition();
+  // Assignee chosen via the dropdown; submitted as a hidden form field.
+  // Persists across re-renders within the same approval card.
+  const [assignee, setAssignee] = useState<string | null>(
+    task.assigneeInjazUserName ?? null,
+  );
 
   const isTerminal = task.state !== 'proposed' && task.state !== 'edited';
 
@@ -143,7 +149,14 @@ export function TaskCard({ task }: { task: ProposedTask }) {
       )}
 
       {!isTerminal && (
-        <div className="flex gap-2 pt-1">
+        <div className="space-y-2 pt-1">
+          <AssigneePicker
+            guess={task.assigneeGuess}
+            value={assignee}
+            onChange={setAssignee}
+            disabled={pending}
+          />
+          <div className="flex gap-2">
           <form
             action={(fd) =>
               startTransition(async () => {
@@ -153,6 +166,11 @@ export function TaskCard({ task }: { task: ProposedTask }) {
             className="inline"
           >
             <input type="hidden" name="taskId" value={task.id} />
+            <input
+              type="hidden"
+              name="assigneeInjazUserName"
+              value={assignee ?? ''}
+            />
             <button
               type="submit"
               disabled={pending}
@@ -176,6 +194,7 @@ export function TaskCard({ task }: { task: ProposedTask }) {
           >
             <X className="size-3.5" /> Reject
           </button>
+          </div>
         </div>
       )}
     </div>

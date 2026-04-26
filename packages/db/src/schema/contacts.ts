@@ -20,6 +20,13 @@ export const contacts = pgTable('contacts', {
   displayName: text('display_name').notNull(),
   accountId: uuid('account_id').references(() => accounts.id, { onDelete: 'set null' }),
   notes: text('notes'),
+  // Optional mapping into Injaz so synced tasks land under the right
+  // client/project. Both fields are free-text names because Injaz's
+  // MCP create_task takes `projectName` (not an ID), and the list
+  // endpoints don't expose stable IDs anyway. Update via PATCH
+  // /api/contacts/[id].
+  injazPartyName: text('injaz_party_name'),
+  injazProjectName: text('injaz_project_name'),
   allowTranscription: boolean('allow_transcription').notNull().default(true),
   allowAction: boolean('allow_action').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

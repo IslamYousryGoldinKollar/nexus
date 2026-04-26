@@ -10,6 +10,8 @@ import {
   approvedTasks as approvedTasksTable,
   attachments as attachmentsTable,
   interactions as interactionsTable,
+  sessions as sessionsTable,
+  contacts as contactsTable,
   setProposedTaskSynced,
   upsertApprovedTask,
 } from '@nexus/db';
@@ -62,6 +64,10 @@ export async function GET(req: NextRequest) {
     //   (a) no approved_tasks row at all (never tried)
     //   (b) approved_tasks row exists but syncState != 'synced' (last
     //       attempt failed or is mid-flight).
+    // Pull the proposed task plus the contact's Injaz mapping in one
+    // shot. Falls back gracefully when session.contactId or
+    // contacts.injaz_project_name is null (those tasks just sync
+    // without a project link, exactly like before this commit).
     const pending = await db
       .select({
         id: proposedTasksTable.id,
@@ -71,9 +77,13 @@ export async function GET(req: NextRequest) {
         priorityGuess: proposedTasksTable.priorityGuess,
         dueDateGuess: proposedTasksTable.dueDateGuess,
         assigneeGuess: proposedTasksTable.assigneeGuess,
+        assigneeInjazUserName: proposedTasksTable.assigneeInjazUserName,
+        injazProjectName: contactsTable.injazProjectName,
       })
       .from(proposedTasksTable)
       .leftJoin(approvedTasksTable, eq(approvedTasksTable.proposedTaskId, proposedTasksTable.id))
+      .leftJoin(sessionsTable, eq(sessionsTable.id, proposedTasksTable.sessionId))
+      .leftJoin(contactsTable, eq(contactsTable.id, sessionsTable.contactId))
       .where(
         and(
           eq(proposedTasksTable.state, 'approved'),
@@ -110,12 +120,18 @@ export async function GET(req: NextRequest) {
           storageCreds,
         );
 
+        // Operator-confirmed assignee wins over the AI's guess. The
+        // contact's injaz_project_name (set via the contact-mapping UI)
+        // routes the task into the right Injaz project.
+        const assignee = task.assigneeInjazUserName ?? task.assigneeGuess ?? null;
+
         const injazTask = await createInjazTask(client, {
           title: task.title,
           description,
           priority: task.priorityGuess,
           dueDate: task.dueDateGuess ? (task.dueDateGuess as unknown as string) : null,
-          assignee: task.assigneeGuess,
+          assignee,
+          projectName: task.injazProjectName ?? undefined,
           externalRefId: task.id,
         });
 

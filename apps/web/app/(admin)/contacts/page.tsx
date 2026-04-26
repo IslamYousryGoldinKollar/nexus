@@ -3,6 +3,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { formatRelative } from '@/components/ui/format';
 import { listContacts } from '@/lib/queries/contacts-list';
 import ContactPrivacyControls from './contact-privacy-controls';
+import ContactInjazMapping from './contact-injaz-mapping';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,6 +32,7 @@ export default async function ContactsPage() {
               <tr>
                 <th className="px-4 py-2 text-left font-medium">Name</th>
                 <th className="px-4 py-2 text-left font-medium">Identifiers</th>
+                <th className="px-4 py-2 text-left font-medium">Injaz client / project</th>
                 <th className="px-4 py-2 text-center font-medium">Transcribe</th>
                 <th className="px-4 py-2 text-center font-medium">Action</th>
                 <th className="px-4 py-2 text-right font-medium">Sessions</th>
@@ -58,6 +60,13 @@ export default async function ContactsPage() {
                         </span>
                       )}
                     </div>
+                  </td>
+                  <td className="px-4 py-2">
+                    <ContactInjazMapping
+                      contactId={contact.id}
+                      initialPartyName={contact.injazPartyName ?? null}
+                      initialProjectName={contact.injazProjectName ?? null}
+                    />
                   </td>
                   <td className="px-4 py-2 text-center">
                     <ContactPrivacyControls

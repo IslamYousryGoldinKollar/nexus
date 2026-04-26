@@ -65,6 +65,10 @@ export const proposedTasks = pgTable(
     title: text('title').notNull(),
     description: text('description').notNull(),
     assigneeGuess: text('assignee_guess'),
+    // Operator-confirmed assignee picked at approval time. Free text
+    // because Injaz's MCP `create_task` takes `assigneeName`. Falls
+    // back to assigneeGuess when null.
+    assigneeInjazUserName: text('assignee_injaz_user_name'),
     priorityGuess: priorityEnum('priority_guess').notNull().default('med'),
     dueDateGuess: timestamp('due_date_guess', { withTimezone: true }),
     rationale: text('rationale').notNull(),

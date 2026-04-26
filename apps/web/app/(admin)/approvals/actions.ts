@@ -76,11 +76,18 @@ async function recordApprovalEvent(args: {
 export async function approveTask(formData: FormData): Promise<void> {
   const admin = await ensureAdmin();
   const taskId = taskIdSchema.parse(formData.get('taskId'));
+  // Optional assignee picked from the Injaz user dropdown. Empty string
+  // = "no override" — sync falls back to the AI's assigneeGuess.
+  const assignee = ((formData.get('assigneeInjazUserName') as string | null) ?? '').trim();
 
   const db = getDb();
   const [row] = await db
     .update(proposedTasks)
-    .set({ state: 'approved', updatedAt: sql`now()` })
+    .set({
+      state: 'approved',
+      assigneeInjazUserName: assignee.length > 0 ? assignee : null,
+      updatedAt: sql`now()`,
+    })
     .where(eq(proposedTasks.id, taskId))
     .returning();
   if (!row) throw new Error('task_not_found');
@@ -89,6 +96,7 @@ export async function approveTask(formData: FormData): Promise<void> {
     proposedTaskId: taskId,
     email: admin.email,
     action: 'approved',
+    payload: assignee ? { assigneeInjazUserName: assignee } : undefined,
   });
 
   // Fire-and-forget Injaz sync trigger (Phase 6 will subscribe).
