@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const auth = authorizePhoneUpload(req);
+    const auth = await authorizePhoneUpload(req);
     if (!auth.ok) {
       log.warn('phone.auth.invalid', { reason: auth.reason });
       return new NextResponse('Unauthorized', { status: 401 });

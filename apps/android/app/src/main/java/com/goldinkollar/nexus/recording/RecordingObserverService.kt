@@ -89,10 +89,18 @@ class RecordingObserverService : Service() {
         private const val FOREGROUND_NOTIFICATION_ID = 9001
 
         // User-configurable in a future settings screen. Add your recorder app's path.
+        // Cube ACR drops files in `Cube Call Recorder/all/CubeCallRecorder/` (one
+        // level deeper than the SAF-picked root); we list both so the file
+        // observer catches whichever the device uses.
         private val WATCHED_DIRS = listOf(
             "Cube Call Recorder/all",
+            "Cube Call Recorder/all/CubeCallRecorder",
+            "Cube Call Recorder",
             "Recordings/Call",
+            "Recordings/Calls",
             "Recorder/Call",
+            "Call recordings",
+            "MIUI/sound_recorder/call_rec",
         )
     }
 }
