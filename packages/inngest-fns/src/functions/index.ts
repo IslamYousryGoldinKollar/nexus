@@ -54,3 +54,7 @@ export {
   telegramFallback,
   budgetMonitor,
 };
+
+// Re-exports for callers (e.g. /api/cron/*) that want to run the
+// underlying business logic inline instead of via Inngest events.
+export { extractIdentifier } from './extract-identifier.js';

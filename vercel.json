@@ -6,6 +6,10 @@
   "outputDirectory": ".next",
   "crons": [
     {
+      "path": "/api/cron/process-pending",
+      "schedule": "*/2 * * * *"
+    },
+    {
       "path": "/api/cron/auto-reason",
       "schedule": "*/10 * * * *"
     },
