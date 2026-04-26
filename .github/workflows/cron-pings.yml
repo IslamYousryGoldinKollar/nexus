@@ -1,28 +1,20 @@
-name: Nexus cron pings
+name: Nexus cron pings (DISABLED — Vercel Pro handles this now)
 
-# Why this workflow exists:
-#   Vercel's Hobby plan caps cron jobs at ONCE PER DAY, max 2 per project.
-#   We have 5 cron endpoints (process-pending, auto-transcribe,
-#   auto-reason, sync-approved-injaz, sync-inngest) that need to run on
-#   2-minute / 30-minute cadences. GitHub Actions on the free tier can
-#   schedule down to ~5 min reliably (the 1-min minimum is best-effort
-#   and gets dropped under load), so we ping the public cron endpoints
-#   from here.
+# DISABLED 2026-04-26 once we moved to Vercel Pro. The Pro plan lets
+# us schedule cron jobs as often as every minute (vs once/day on Hobby),
+# so vercel.json's */2 schedule is now authoritative for all five
+# endpoints (process-pending, auto-transcribe, auto-reason,
+# sync-approved-injaz, wa-watchdog).
 #
-#   Each endpoint accepts a no-auth GET when CRON_SECRET is unset
-#   (current prod state). If we add CRON_SECRET later, swap the curls
-#   to send `Authorization: Bearer ${{ secrets.CRON_SECRET }}`.
+# We also discovered the GitHub Actions schedule was being throttled
+# to 30-60 min cadence under load (the */5 spec is best-effort, not a
+# guarantee), which caused the 5-hour-delayed Telegram alerts the
+# user reported on Apr 26.
 #
-#   Cost: ~30s × 12 runs/hour × 24h = ~6h compute/day. GitHub Actions
-#   free tier is 2000 min/month for private repos, unlimited for public.
-#   This repo is private so we're using ~180 of 2000 min/month — fine.
+# Kept here as a manual escape hatch — invoke via workflow_dispatch
+# from the Actions UI if Vercel ever has an outage.
 
 on:
-  schedule:
-    # Every 5 minutes. GitHub trims schedules under heavy queue, so 5
-    # is the practical floor. Drop to '*/2' once we move to a paid plan
-    # or self-host the runner.
-    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 # Don't fan out concurrent runs if a tick takes longer than 5 min.

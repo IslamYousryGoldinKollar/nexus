@@ -22,6 +22,10 @@
       "schedule": "*/2 * * * *"
     },
     {
+      "path": "/api/cron/wa-watchdog",
+      "schedule": "*/2 * * * *"
+    },
+    {
       "path": "/api/cron/sync-inngest",
       "schedule": "*/30 * * * *"
     }
