@@ -3,7 +3,9 @@ import {
   and,
   eq,
   getDb,
+  or,
   isNull,
+  sql,
   proposedTasks as proposedTasksTable,
   approvedTasks as approvedTasksTable,
   setProposedTaskSynced,
@@ -47,8 +49,13 @@ export async function GET(req: NextRequest) {
 
     const db = getDb();
 
-    // Tasks that are state=approved AND don't yet have a synced
-    // approved_tasks row. LEFT JOIN with NULL filter gives us the gap.
+    // Tasks that are state=approved AND haven't been successfully synced
+    // yet. Two cases:
+    //   (a) no approved_tasks row at all (never tried)
+    //   (b) approved_tasks row exists but syncState != 'synced' (last
+    //       attempt failed or is mid-flight).
+    // The previous version only handled case (a), which left 9 tasks
+    // permanently stuck after the REST→MCP migration.
     const pending = await db
       .select({
         id: proposedTasksTable.id,
@@ -63,7 +70,10 @@ export async function GET(req: NextRequest) {
       .where(
         and(
           eq(proposedTasksTable.state, 'approved'),
-          isNull(approvedTasksTable.id),
+          or(
+            isNull(approvedTasksTable.id),
+            sql`${approvedTasksTable.syncState} != 'synced'`,
+          ),
         ),
       )
       .limit(20);
