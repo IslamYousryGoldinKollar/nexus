@@ -35,7 +35,11 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const stalenessMin = Number(req.nextUrl.searchParams.get('stalenessMin') ?? '30');
+    const stalenessMin = Number(
+      req.nextUrl.searchParams.get('stalenessMin') ??
+        process.env.WATCHDOG_STALENESS_MIN ??
+        '30',
+    );
 
     const db = getDb();
     const rows = (await db.execute(sql`
