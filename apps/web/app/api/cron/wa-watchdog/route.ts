@@ -67,6 +67,29 @@ export async function GET(req: NextRequest) {
     }
 
     const bridgeUrl = process.env.WA_BRIDGE_URL?.trim() || 'https://nexus-wa-bridge.fly.dev';
+
+    // Don't restart-loop. If the bridge has been up < 6 min, give it
+    // time to handshake + drain offline messages before another
+    // restart. Without this every 2-min cron tick kicks the bridge
+    // again before its previous restart finished settling — which on
+    // a corrupted Signal session just compounds the corruption.
+    try {
+      const h = await fetch(`${bridgeUrl}/health`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      const hb = (await h.json().catch(() => ({}))) as { uptimeSec?: number };
+      if (typeof hb.uptimeSec === 'number' && hb.uptimeSec < 360) {
+        return NextResponse.json({
+          ok: true,
+          ...baseInfo,
+          action: 'skipped-too-young',
+          bridgeUptimeSec: hb.uptimeSec,
+        });
+      }
+    } catch {
+      /* health check failed — proceed with restart anyway */
+    }
+
     const token = (process.env.WA_BRIDGE_QR_TOKEN || process.env.WA_BRIDGE_HMAC_SECRET)?.trim();
     if (!token) {
       log.error('cron.wa-watchdog.no_token');

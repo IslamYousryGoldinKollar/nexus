@@ -60,7 +60,7 @@ export function startQrServer(token: string): Server {
 
     // POST /restart — process.exit(0) so Fly's restart policy spins a
     // fresh container with a fresh Baileys WebSocket. The watchdog
-    // (apps/web/api/admin/wa-watchdog) calls this when it notices no
+    // (apps/web/api/cron/wa-watchdog) calls this when it notices no
     // WhatsApp interactions have arrived for the staleness window,
     // covering Baileys' silent-disconnect failure mode where
     // connection.update never fires 'close'.
@@ -70,6 +70,36 @@ export function startQrServer(token: string): Server {
       res.end(JSON.stringify({ ok: true, restarting: true }));
       // Give the response a tick to flush before exiting.
       setTimeout(() => process.exit(0), 200);
+      return;
+    }
+
+    // POST /wipe-auth — wipe the Supabase-stored auth snapshot AND
+    // exit. On reboot Baileys finds no auth, emits a fresh QR, and
+    // the user re-pairs from their phone. Use this when Signal-Protocol
+    // keys go corrupt (MessageCounterError "Key used already" — usually
+    // from a prior multi-instance conflict).
+    if (url.pathname === '/wipe-auth' && req.method === 'POST') {
+      log.warn('wipe-auth.requested');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      // Lazy-import to avoid top-level circular imports between
+      // qr-server and storage.
+      import('./storage.js')
+        .then(async (m) => {
+          try {
+            const n = await m.wipeAuthFiles();
+            log.warn({ deleted: n }, 'wipe-auth.done');
+            res.end(JSON.stringify({ ok: true, deleted: n, restarting: true }));
+          } catch (err) {
+            log.error({ err: (err as Error).message }, 'wipe-auth.failed');
+            res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
+          } finally {
+            setTimeout(() => process.exit(0), 200);
+          }
+        })
+        .catch((err) => {
+          log.error({ err: (err as Error).message }, 'wipe-auth.import_failed');
+          setTimeout(() => process.exit(0), 200);
+        });
       return;
     }
 
