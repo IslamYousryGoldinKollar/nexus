@@ -16,6 +16,8 @@ import {
   listOpenInjazTasksForClient,
   listInjazProjectsForClient,
   listInjazAssigneeWorkload,
+  listAllInjazClients,
+  listAllInjazEmployees,
 } from '@nexus/services';
 import { log } from '@/lib/logger';
 import { notifyProposalCreated } from '@/lib/notify/proposal';
@@ -99,6 +101,8 @@ export async function runReasoningForSession(
       clientProjects,
       assigneeWorkload,
       pastSessions,
+      knownClients,
+      knownEmployees,
     ] = await Promise.all([
       injazPartyName || injazProjectName
         ? listOpenInjazTasksForClient({
@@ -126,6 +130,17 @@ export async function runReasoningForSession(
             return [];
           })
         : Promise.resolve([]),
+      // Always fetch the company-wide client & employee lists — the
+      // model uses them for Whisper-correction and assignee routing
+      // even when the contact has no Injaz mapping.
+      listAllInjazClients().catch((err) => {
+        log.warn('reasoning.injaz_clients_failed', { sessionId, err: (err as Error).message });
+        return [];
+      }),
+      listAllInjazEmployees().catch((err) => {
+        log.warn('reasoning.injaz_employees_failed', { sessionId, err: (err as Error).message });
+        return [];
+      }),
     ]);
 
     const reasonInput = {
@@ -177,6 +192,15 @@ export async function runReasoningForSession(
         summary: s.summary,
         proposedTitles: s.proposedTitles,
       })),
+      knownClients: knownClients.map((c) => ({
+        name: c.name,
+        contactName: c.contactName,
+        email: c.email,
+        phone: c.phone,
+      })),
+      knownEmployees: knownEmployees
+        .filter((e) => e.approvalStatus === 'approved')
+        .map((e) => ({ name: e.name, email: e.email, role: e.role })),
     };
 
     const result = await reasonOverSession({

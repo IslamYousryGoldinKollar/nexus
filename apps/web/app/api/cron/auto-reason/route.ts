@@ -33,25 +33,40 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const cooldownMin = Number(process.env.SESSION_COOLDOWN_MIN ?? '5') || 5;
-    const cutoffMs = Date.now() - cooldownMin * 60 * 1000;
-    const cutoffIso = new Date(cutoffMs).toISOString();
+    const cooldownMin = Number(process.env.SESSION_COOLDOWN_MIN ?? '3') || 3;
+    // Hard cap on session age: a session can stay 'open'/'aggregating' for
+    // at most this many minutes before we force-reason it regardless of
+    // recent activity. Without this a chatty client could keep extending
+    // a single session indefinitely, which means tasks never surface for
+    // approval. 15 min is the user's UX target — "no client should send
+    // voice notes about one topic for more than half an hour".
+    const maxSessionAgeMin = Number(process.env.MAX_SESSION_AGE_MIN ?? '15') || 15;
+    // If a session sits in 'reasoning' for more than this, presume the
+    // previous tick crashed/timed out and re-claim. Was 5×cooldown (25
+    // min); dropped to 8 min so a single dropped reasoning attempt
+    // doesn't dominate end-to-end latency.
+    const stuckReasoningMin = Number(process.env.STUCK_REASONING_MIN ?? '8') || 8;
+
+    const cutoffIso = new Date(Date.now() - cooldownMin * 60 * 1000).toISOString();
+    const maxAgeIso = new Date(Date.now() - maxSessionAgeMin * 60 * 1000).toISOString();
+    const stuckCutoffIso = new Date(Date.now() - stuckReasoningMin * 60 * 1000).toISOString();
 
     const db = getDb();
 
-    // Atomic flip: pick eligible sessions and bump them to `reasoning`.
-    // We re-claim sessions already in `reasoning` state if they've been
-    // sitting there longer than 5 cooldown intervals — that means the
-    // previous tick crashed or timed out before finishing. Without this
-    // sessions get permanently stuck the moment auto-reason hits its
-    // maxDuration.
-    const stuckCutoffIso = new Date(Date.now() - cooldownMin * 5 * 60 * 1000).toISOString();
+    // Atomic flip: pick everything eligible and bump them to `reasoning`.
+    // Three branches:
+    //   (a) cooldown — silent for cooldownMin
+    //   (b) max age — opened more than maxSessionAgeMin ago (force-fire)
+    //   (c) stuck — already in 'reasoning' but updated_at is too old
+    //               (previous tick failed, give it another shot)
     const promoted = await db
       .update(sessions)
       .set({ state: 'reasoning', updatedAt: sql`now()` })
       .where(
         sql`(
           (${sessions.state} in ('open', 'aggregating') and ${sessions.lastActivityAt} <= ${cutoffIso})
+          OR
+          (${sessions.state} in ('open', 'aggregating') and ${sessions.openedAt} <= ${maxAgeIso})
           OR
           (${sessions.state} = 'reasoning' and ${sessions.updatedAt} <= ${stuckCutoffIso})
         )`,

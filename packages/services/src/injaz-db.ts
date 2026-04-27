@@ -174,6 +174,67 @@ export async function listInjazProjectsForClient(
   }));
 }
 
+export interface InjazClientFull {
+  name: string;
+  contactName: string | null;
+  email: string | null;
+  phone: string | null;
+  notes: string | null;
+}
+
+/**
+ * Every CLIENT party plus the contact-person field Injaz stores on
+ * the row. Used to build the company-context block the reasoner uses
+ * to (a) recognise who's on the other end of an email/voice note and
+ * (b) correct names that Whisper got slightly wrong (e.g. "Merna" vs
+ * "Mirna"). Cheap query — ~10 rows.
+ */
+export async function listAllInjazClients(): Promise<InjazClientFull[]> {
+  const c = client();
+  if (!c) return [];
+  const rows = await c<
+    Array<{
+      name: string;
+      contactName: string | null;
+      email: string | null;
+      phone: string | null;
+      notes: string | null;
+    }>
+  >`
+    SELECT name, "contactName", email, phone, notes
+    FROM "Party"
+    WHERE type = 'CLIENT'
+    ORDER BY name
+  `;
+  return rows;
+}
+
+export interface InjazEmployeeFull {
+  name: string;
+  email: string;
+  role: string;
+  approvalStatus: string;
+}
+
+/**
+ * Every Injaz user, with role + approvalStatus. The reasoner uses
+ * `role` to suggest the right assignee (e.g. design tasks → designers)
+ * and uses `approvalStatus` to filter out stale duplicates that show
+ * up in the auth table but aren't really active.
+ */
+export async function listAllInjazEmployees(): Promise<InjazEmployeeFull[]> {
+  const c = client();
+  if (!c) return [];
+  const rows = await c<
+    Array<{ name: string; email: string; role: string; approvalStatus: string }>
+  >`
+    SELECT name, email, role, "approvalStatus"
+    FROM "User"
+    ORDER BY name
+  `;
+  return rows;
+}
+
 export interface InjazAssigneeWorkload {
   name: string;
   email: string;

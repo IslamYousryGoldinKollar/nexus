@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { computeClaudeCostUsd, getAnthropicClient, SONNET_4_5 } from './anthropic.js';
 import {
   computeOpenAICostUsd,
-  getOpenAIClient,
+  getReasoningClient,
   DEFAULT_REASONING_MODEL,
 } from './openai.js';
 
@@ -88,6 +88,29 @@ export interface ReasonContext {
     summary?: string | null;
     proposedTitles: Array<{ title: string; state: string }>;
   }>;
+  /**
+   * Full snapshot of the company's clients (with the contact person
+   * Injaz has on file). Used by the reasoner to (a) recognise who's
+   * on the other end and write tasks like "Send X to {client name}
+   * (contact: {person})", and (b) auto-correct names that Whisper
+   * mangled — "Merna" against the known "Mirna Sherif", etc.
+   */
+  knownClients?: Array<{
+    name: string;
+    contactName: string | null;
+    email: string | null;
+    phone: string | null;
+  }>;
+  /**
+   * All Injaz users (employees) with role + approval status. Used to
+   * route the assigneeGuess to a real person on the team rather than
+   * a free-text guess.
+   */
+  knownEmployees?: Array<{
+    name: string;
+    email: string;
+    role: string;
+  }>;
 }
 
 // ---- Output schema ------------------------------------------------------
@@ -142,26 +165,60 @@ task manager.
 How to think before producing the JSON (do this internally, do NOT
 include it in the output):
 
-  Step 1 — Read the session. What is the client actually asking for?
-  Step 2 — Look at "Existing open Injaz tasks for this client". For
+  Step 1 — Whisper-correction pass. Voice-note transcripts come from
+           OpenAI Whisper which sometimes mishears proper names. The
+           "Known clients" and "Known employees" blocks list the real
+           spellings. If a transcript contains a name that's a near
+           match (e.g. "Merna" → "Mirna Sherif", "Hassan Aalam" →
+           "Hassan Allam Holding"), MENTALLY substitute the correct
+           spelling everywhere before reasoning. Use the corrected
+           name in titles and descriptions.
+
+  Step 2 — Did Islam already handle it? Scan for outbound messages
+           (direction: outbound) where Islam has already answered
+           the client's request inside this same session — confirmed
+           availability, sent the file, given the price, etc. If
+           the action is done, return ZERO tasks for that thread
+           (or close the existing Injaz task if there's one for it).
+
+  Step 3 — Read the session as a whole. Voice notes about the same
+           topic should be combined into ONE task per concrete
+           deliverable, not one task per voice note. A 4-minute
+           rambling brief is one task ("Produce X"), not four.
+
+  Step 4 — Look at "Existing open Injaz tasks for this client". For
            each candidate finding, ask: is this work already on the
            board? Same deliverable + same client + same intent ⇒
            UPDATE the existing task, do NOT create a duplicate.
-  Step 3 — Look at "Past sessions for this contact". Have we
+
+  Step 5 — Look at "Past sessions for this contact". Have we
            discussed this before? If a prior session produced a task
-           with the same title, prefer UPDATE-ing that one (its id
-           will be in the existing-tasks block too).
-  Step 4 — Look at "Active projects for this client". When you have
-           to set projectName, prefer a project with related open
-           tasks over a generic "General Operations" bucket.
-  Step 5 — Look at "Assignee workload". When the conversation doesn't
-           name an assignee, prefer the approved employee with the
-           lowest open-task count.
-  Step 6 — Write the task description like a brief: include the
-           specific deliverable, any numbers/dates the client gave,
-           and the next physical action. Avoid vague verbs like
-           "follow up" — prefer "Send revised PPP draft v3 with the
-           updated activity timeline".
+           with the same title, prefer UPDATE-ing that one.
+
+  Step 6 — Look at "Active projects for this client". When setting
+           projectName, prefer a project with related open tasks
+           over a generic "General Operations" bucket.
+
+  Step 7 — Look at "Assignee workload". When the conversation
+           doesn't name an assignee, prefer the approved employee
+           with the lowest open-task count whose role fits (e.g.
+           design tasks → designers, finance tasks → finance).
+
+  Step 8 — Write the task title in the format
+           "[Action verb] [deliverable] for {client name}
+            (contact: {person name})"
+           e.g. "Send revised PPP draft v3 for e&
+                  (contact: Mirna Sherif)".
+           If there's no client/contact, omit those parens — but
+           if you DO know them from the context, you MUST include
+           them.
+
+  Step 9 — Write the description like a brief: specific deliverable,
+           any numbers/dates the client gave, the next physical
+           action. Avoid vague verbs like "follow up" — prefer
+           "Send revised PPP draft v3 with the updated activity
+           timeline by 2026-04-29 morning". Reference the corrected
+           Whisper names, not the raw transcript spelling.
 
 Hard rules you must NEVER violate:
   - You never send messages to clients directly. Everything you produce is
@@ -170,13 +227,14 @@ Hard rules you must NEVER violate:
     evidence quote from the session with its interactionId.
   - You never create a task if no follow-up is needed. Returning zero tasks
     is the right answer when the conversation was chitchat, already
-    resolved, or information-only.
+    resolved (Islam already replied/sent), or information-only.
   - Tasks must be actionable by ONE person within a week. Split anything
     bigger; omit anything vaguer.
   - If due date is genuinely unclear, set dueDateGuess to null. Do not
     guess from vibes.
   - Write tasks in the language the client used (if they wrote in Arabic,
-    write the task in Arabic).
+    write the task in Arabic). Title/description in the original language;
+    proper names always in their canonical (Known clients/employees) form.
   - existingInjazTaskId MUST come from the "Existing open Injaz tasks"
     block — never invent an id.`;
 
@@ -296,6 +354,39 @@ ${interactionLines.join('\n')}`;
       for (const t of s.proposedTitles) {
         lines.push(`    · ${t.state}: ${t.title}`);
       }
+    }
+    sections.push('', lines.join('\n'));
+  }
+
+  // Company snapshot — known clients (with canonical name + the
+  // contact person Injaz has) and known employees (with role). Sits
+  // BELOW the conversation-specific blocks because the model should
+  // only consult it when it sees a name that needs correcting or
+  // when picking an assignee. Keeping it always-on costs ~500 tokens
+  // but the latency hit is dwarfed by reasoning time.
+  const clients = ctx.knownClients ?? [];
+  if (clients.length > 0) {
+    const lines = [
+      `=== KNOWN CLIENTS (canonical names — use these spellings; correct Whisper drift) ===`,
+    ];
+    for (const c of clients) {
+      const meta = [
+        c.contactName ? `contact: ${c.contactName}` : null,
+        c.email ? `email: ${c.email}` : null,
+        c.phone ? `phone: ${c.phone}` : null,
+      ]
+        .filter(Boolean)
+        .join(', ');
+      lines.push(`- "${c.name}"${meta ? ` (${meta})` : ''}`);
+    }
+    sections.push('', lines.join('\n'));
+  }
+
+  const employees = ctx.knownEmployees ?? [];
+  if (employees.length > 0) {
+    const lines = [`=== KNOWN EMPLOYEES (use canonical name in assigneeGuess) ===`];
+    for (const e of employees) {
+      lines.push(`- "${e.name}" (${e.role}${e.email ? `, ${e.email}` : ''})`);
     }
     sections.push('', lines.join('\n'));
   }
@@ -420,11 +511,27 @@ async function reasonOverSessionOpenAI(args: {
 }): Promise<ReasonCallResult> {
   const { apiKey, model = DEFAULT_REASONING_MODEL, context, maxTokens = 4096 } = args;
 
-  const client = getOpenAIClient(apiKey);
+  // Route to DeepSeek for `deepseek-*` models, OpenAI for everything
+  // else. Both speak the same chat-completions wire format so the
+  // request payload below is identical — only the bearer + base URL
+  // differ.
+  const { client, provider } = getReasoningClient({ model, openaiKey: apiKey });
   const userBody = buildSessionBody(context);
 
   const start = Date.now();
-  const response = await client.chat.completions.create({
+  // DeepSeek's "thinking mode" gives the model up to ~32K reasoning
+  // tokens (not billed as output) before it produces the final JSON.
+  // Worth it for the multi-step decisions Nexus makes.
+  const extraBody =
+    provider === 'deepseek'
+      ? { thinking: { type: 'enabled' }, reasoning_effort: 'high' }
+      : undefined;
+
+  // Build the request with DeepSeek's extra fields tucked into the
+  // body via `as Record<string, unknown>` — the OpenAI SDK strips
+  // unknown keys at the type level but forwards them in the JSON
+  // payload, which is exactly what DeepSeek's compat shim reads.
+  const requestBody: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
     model,
     max_tokens: maxTokens,
     messages: [
@@ -438,7 +545,12 @@ async function reasonOverSessionOpenAI(args: {
       },
     ],
     response_format: { type: 'json_object' },
-  });
+    stream: false,
+  };
+  if (extraBody) {
+    Object.assign(requestBody as unknown as Record<string, unknown>, extraBody);
+  }
+  const response = await client.chat.completions.create(requestBody);
   const latencyMs = Date.now() - start;
 
   const raw = response.choices[0]?.message?.content;
