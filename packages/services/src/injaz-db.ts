@@ -128,13 +128,18 @@ export interface InjazProjectSummary {
   status: string;
   description: string | null;
   openTaskCount: number;
+  /** Most-frequent assignee on the project's open tasks — best
+   *  available proxy for "who owns this project" since Injaz's
+   *  schema has no explicit project-lead field. Null when the
+   *  project has no open tasks or all assignees are unset. */
+  leadAssigneeName: string | null;
 }
 
 /**
- * All ACTIVE projects for a client + how many open tasks each carries.
- * Lets the AI know "this client has 4 active projects, you should
- * probably attach the new task to project X because it's where the
- * existing related work lives."
+ * All ACTIVE projects for a client + how many open tasks each carries
+ * + who's been working on it most. Lets the reasoner answer "for this
+ * client, which project should the new task land in" and "who's
+ * already running it."
  */
 export async function listInjazProjectsForClient(
   clientName: string,
@@ -148,16 +153,82 @@ export async function listInjazProjectsForClient(
       status: string;
       description: string | null;
       openTaskCount: string;
+      leadAssigneeName: string | null;
     }>
   >`
+    WITH proj_open AS (
+      SELECT p.id, p.name, p.status, p.description,
+             t.id AS task_id, u.name AS assignee_name
+      FROM "Project" p
+      LEFT JOIN "Party" party ON party.id = p."clientPartyId"
+      LEFT JOIN "Task" t
+        ON t."projectId" = p.id
+       AND t.status NOT IN ('Done', 'Cancelled', 'Archived')
+      LEFT JOIN "User" u ON u.id = t."assigneeId"
+      WHERE party.name = ${clientName} AND p.status = 'ACTIVE'
+    ),
+    lead_per_proj AS (
+      SELECT id,
+             assignee_name,
+             ROW_NUMBER() OVER (PARTITION BY id ORDER BY COUNT(*) DESC NULLS LAST) AS rk
+      FROM proj_open
+      WHERE assignee_name IS NOT NULL
+      GROUP BY id, assignee_name
+    )
     SELECT
       p.id,
       p.name,
       p.status,
       p.description,
-      COUNT(t.id) FILTER (
-        WHERE t.status NOT IN ('Done', 'Cancelled', 'Archived')
-      )::text AS "openTaskCount"
+      COUNT(po.task_id)::text AS "openTaskCount",
+      (SELECT assignee_name FROM lead_per_proj l
+        WHERE l.id = p.id AND l.rk = 1) AS "leadAssigneeName"
+    FROM proj_open p
+    GROUP BY p.id, p.name, p.status, p.description
+    ORDER BY COUNT(po.task_id) DESC, p.name ASC
+  `.catch(async () => {
+    // Window-function CTE may not be allowed on all Prisma-managed
+    // Postgres permission setups. Fall back to a two-query approach:
+    // load summaries first, then look up the lead per project in a
+    // second round-trip. Slower but always works.
+    return fallbackProjectsForClient(c, clientName);
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    status: r.status,
+    description: r.description,
+    openTaskCount: Number(r.openTaskCount),
+    leadAssigneeName: r.leadAssigneeName,
+  }));
+}
+
+async function fallbackProjectsForClient(
+  c: Sql,
+  clientName: string,
+): Promise<
+  Array<{
+    id: string;
+    name: string;
+    status: string;
+    description: string | null;
+    openTaskCount: string;
+    leadAssigneeName: string | null;
+  }>
+> {
+  const summaries = await c<
+    Array<{
+      id: string;
+      name: string;
+      status: string;
+      description: string | null;
+      openTaskCount: string;
+    }>
+  >`
+    SELECT p.id, p.name, p.status, p.description,
+           COUNT(t.id) FILTER (
+             WHERE t.status NOT IN ('Done', 'Cancelled', 'Archived')
+           )::text AS "openTaskCount"
     FROM "Project" p
     LEFT JOIN "Party" party ON party.id = p."clientPartyId"
     LEFT JOIN "Task" t ON t."projectId" = p.id
@@ -165,13 +236,22 @@ export async function listInjazProjectsForClient(
     GROUP BY p.id, p.name, p.status, p.description
     ORDER BY COUNT(t.id) DESC, p.name ASC
   `;
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    status: r.status,
-    description: r.description,
-    openTaskCount: Number(r.openTaskCount),
-  }));
+  if (summaries.length === 0) return [];
+  const ids = summaries.map((s) => s.id);
+  const leads = await c<Array<{ projectId: string; name: string; n: string }>>`
+    SELECT t."projectId" AS "projectId", u.name, COUNT(*)::text AS n
+    FROM "Task" t
+    JOIN "User" u ON u.id = t."assigneeId"
+    WHERE t."projectId" = ANY(${ids})
+      AND t.status NOT IN ('Done', 'Cancelled', 'Archived')
+    GROUP BY t."projectId", u.name
+    ORDER BY t."projectId", COUNT(*) DESC
+  `;
+  const leadMap = new Map<string, string>();
+  for (const l of leads) {
+    if (!leadMap.has(l.projectId)) leadMap.set(l.projectId, l.name);
+  }
+  return summaries.map((s) => ({ ...s, leadAssigneeName: leadMap.get(s.id) ?? null }));
 }
 
 export interface InjazClientFull {

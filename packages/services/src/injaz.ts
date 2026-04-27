@@ -38,6 +38,7 @@ export interface InjazTaskInput {
   title: string;
   description: string;
   priority?: 'low' | 'med' | 'high' | 'urgent';
+  startDate?: string | null;     // ISO 8601 — passed as MCP startDate
   dueDate?: string | null;       // ISO 8601
   assignee?: string | null;      // freeform name or email
   projectName?: string | null;   // Injaz project — implicitly carries the client
@@ -124,6 +125,7 @@ export async function createInjazTask(
     description: task.description,
   };
   if (task.priority) args.priority = mapPriorityToInjaz(task.priority);
+  if (task.startDate) args.startDate = task.startDate;
   if (task.dueDate) args.dueDate = task.dueDate;
   if (task.assignee) args.assigneeName = task.assignee;
   if (task.projectName) args.projectName = task.projectName;
@@ -497,6 +499,80 @@ export async function getInjazTask(
 }
 
 /**
+ * MCP `create_party` — create a CLIENT (or VENDOR/EMPLOYEE/etc.)
+ * party in Injaz. The reasoner sets `proposed_tasks.create_client_name`
+ * when it's confident the conversation involves a client we don't have
+ * yet, and the sync cron calls this before create_task.
+ *
+ * Returns whatever the MCP tool echoes back. Idempotent at Injaz's
+ * level — repeat calls with the same name fail with a duplicate
+ * error which we treat as success (the party already exists).
+ */
+export async function createInjazParty(
+  opts: InjazClientOptions,
+  args: {
+    name: string;
+    type?: 'CLIENT' | 'VENDOR' | 'EMPLOYEE' | 'OWNER' | 'OTHER';
+    email?: string | null;
+    phone?: string | null;
+  },
+): Promise<{ name: string; alreadyExists?: boolean }> {
+  const callArgs: Record<string, unknown> = {
+    name: args.name,
+    type: args.type ?? 'CLIENT',
+  };
+  if (args.email) callArgs.email = args.email;
+  if (args.phone) callArgs.phone = args.phone;
+
+  try {
+    await mcpToolsCall(mcpSseUrl(opts), opts.apiKey, 'create_party', callArgs);
+    return { name: args.name };
+  } catch (err) {
+    const m = (err as Error).message.toLowerCase();
+    if (m.includes('duplicate') || m.includes('already') || m.includes('exists')) {
+      return { name: args.name, alreadyExists: true };
+    }
+    throw err;
+  }
+}
+
+/**
+ * MCP `create_project` — create a project in Injaz, optionally
+ * linked to a client via `clientName`. Triggered by
+ * `proposed_tasks.create_project_name` when the AI thinks the
+ * conversation is about new work that doesn't fit any existing
+ * project. Same idempotency-on-duplicate behaviour as
+ * createInjazParty.
+ */
+export async function createInjazProject(
+  opts: InjazClientOptions,
+  args: {
+    name: string;
+    clientName?: string | null;
+    description?: string | null;
+    status?: 'ACTIVE' | 'COMPLETED' | 'ON_HOLD' | 'CANCELLED';
+  },
+): Promise<{ name: string; alreadyExists?: boolean }> {
+  const callArgs: Record<string, unknown> = {
+    name: args.name,
+    status: args.status ?? 'ACTIVE',
+  };
+  if (args.clientName) callArgs.clientName = args.clientName;
+  if (args.description) callArgs.description = args.description;
+
+  try {
+    await mcpToolsCall(mcpSseUrl(opts), opts.apiKey, 'create_project', callArgs);
+    return { name: args.name };
+  } catch (err) {
+    const m = (err as Error).message.toLowerCase();
+    if (m.includes('duplicate') || m.includes('already') || m.includes('exists')) {
+      return { name: args.name, alreadyExists: true };
+    }
+    throw err;
+  }
+}
+
+/**
  * MCP `update_task` — patch an existing Injaz Task. Used by the sync
  * cron when the AI determined a proposed task is an UPDATE rather than
  * a new one (`proposed_tasks.injaz_existing_task_id` set).
@@ -513,6 +589,7 @@ export async function updateInjazTaskViaMcp(
     description?: string;
     status?: string;
     priority?: 'low' | 'med' | 'high' | 'urgent';
+    startDate?: string | null;
     dueDate?: string | null;
     assignee?: string | null;
     projectName?: string | null;
@@ -523,6 +600,7 @@ export async function updateInjazTaskViaMcp(
   if (patch.description !== undefined) args.description = patch.description;
   if (patch.status !== undefined) args.status = patch.status;
   if (patch.priority !== undefined) args.priority = mapPriorityToInjaz(patch.priority);
+  if (patch.startDate !== undefined && patch.startDate !== null) args.startDate = patch.startDate;
   if (patch.dueDate !== undefined && patch.dueDate !== null) args.dueDate = patch.dueDate;
   if (patch.assignee) args.assigneeName = patch.assignee;
   if (patch.projectName) args.projectName = patch.projectName;

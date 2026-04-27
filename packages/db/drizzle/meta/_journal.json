@@ -36,6 +36,13 @@
       "when": 1777181927574,
       "tag": "0004_colorful_smiling_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1777332960553,
+      "tag": "0005_regular_miracleman",
+      "breakpoints": true
     }
   ]
 }

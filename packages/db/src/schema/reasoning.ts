@@ -74,6 +74,21 @@ export const proposedTasks = pgTable(
     // Injaz Task.id. The sync cron then calls MCP `update_task`
     // instead of `create_task`. Null = create a new task.
     injazExistingTaskId: text('injaz_existing_task_id'),
+    // Optional start date the AI inferred from the conversation (e.g.
+    // "نبدأ بكره الصبح"). Passed to Injaz create_task as startDate.
+    startDateGuess: timestamp('start_date_guess', { withTimezone: true }),
+    // When the AI is confident the client mentioned in the
+    // conversation isn't in our Known Clients list, it sets this to
+    // the proposed canonical name. The sync cron calls MCP
+    // create_party (type=CLIENT) before create_task. Null = use the
+    // existing client mapping from contacts.injaz_party_name.
+    createClientName: text('create_client_name'),
+    // Same idea for projects: when the AI thinks the conversation is
+    // about new work that doesn't fit any active project, it sets
+    // this to the proposed project name. Sync calls create_project,
+    // linking to the client identified by createClientName OR the
+    // contact's injaz_party_name. Null = use existing projectName.
+    createProjectName: text('create_project_name'),
     priorityGuess: priorityEnum('priority_guess').notNull().default('med'),
     dueDateGuess: timestamp('due_date_guess', { withTimezone: true }),
     rationale: text('rationale').notNull(),

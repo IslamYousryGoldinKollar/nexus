@@ -181,6 +181,7 @@ export async function runReasoningForSession(
         name: p.name,
         openTaskCount: p.openTaskCount,
         description: p.description,
+        leadAssigneeName: p.leadAssigneeName,
       })),
       assigneeWorkload: assigneeWorkload.map((w) => ({
         name: w.name,
@@ -235,11 +236,18 @@ export async function runReasoningForSession(
         description: t.description,
         assigneeGuess: t.assigneeGuess ?? null,
         priorityGuess: t.priority,
+        startDateGuess: t.startDateGuess ? new Date(t.startDateGuess) : null,
         dueDateGuess: t.dueDateGuess ? new Date(t.dueDateGuess) : null,
         injazExistingTaskId:
           t.existingInjazTaskId && knownInjazIds.has(t.existingInjazTaskId)
             ? t.existingInjazTaskId
             : null,
+        // Trim + null-coalesce the AI's create-on-sync hints. We
+        // accept whatever the AI suggests here — sync-approved-injaz
+        // is responsible for idempotency (createInjazParty/Project
+        // both handle "already exists" without throwing).
+        createClientName: t.createNewClient?.trim() || null,
+        createProjectName: t.createNewProject?.trim() || null,
         rationale: t.rationale,
         evidence: t.evidence.map((e) => ({
           interactionId: e.interactionId,

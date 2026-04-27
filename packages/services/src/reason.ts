@@ -61,13 +61,15 @@ export interface ReasonContext {
   }>;
   /**
    * Active Injaz projects for this client (with how many open tasks
-   * each carries). Helps the AI pick a likely projectName when the
-   * conversation doesn't name one explicitly.
+   * each carries + who's been working on them most). Helps the AI
+   * pick a likely projectName + assignee when the conversation
+   * doesn't name them explicitly.
    */
   clientProjects?: Array<{
     name: string;
     openTaskCount: number;
     description?: string | null;
+    leadAssigneeName?: string | null;
   }>;
   /**
    * Open task count per Injaz user. The reasoner uses this to suggest
@@ -129,6 +131,7 @@ export const proposedTaskSchema = z.object({
     }, z.enum(['low', 'med', 'high', 'urgent']))
     .default('med'),
   assigneeGuess: z.string().nullable().optional(),
+  startDateGuess: z.string().datetime().nullable().optional(),
   dueDateGuess: z.string().datetime().nullable().optional(),
   /**
    * Set ONLY when the AI has determined this proposal updates an
@@ -136,6 +139,21 @@ export const proposedTaskSchema = z.object({
    * the model was shown). Null/undefined = create a new task.
    */
   existingInjazTaskId: z.string().nullable().optional(),
+  /**
+   * When the conversation clearly references a CLIENT that isn't in
+   * the Known-Clients block, the AI sets this to the canonical name
+   * we should create. Sync calls MCP create_party (type=CLIENT)
+   * before create_task. Leave null for chitchat / unclear cases —
+   * we'd rather miss a client than create garbage rows.
+   */
+  createNewClient: z.string().min(2).max(120).nullable().optional(),
+  /**
+   * When the conversation is about new work that doesn't match any
+   * Active Project for the (existing or new) client, the AI proposes
+   * a project name here. Sync calls MCP create_project linking to
+   * the client and uses this name as projectName on the task.
+   */
+  createNewProject: z.string().min(2).max(160).nullable().optional(),
   rationale: z.string().min(1).max(2000),
   evidence: z
     .array(
@@ -252,23 +270,57 @@ Hard rules you must NEVER violate:
     write the task in Arabic). Title/description in the original language;
     proper names always in their canonical (Known clients/employees) form.
   - existingInjazTaskId MUST come from the "Existing open Injaz tasks"
-    block — never invent an id.`;
+    block — never invent an id.
+
+NEW-CLIENT rule (createNewClient):
+  - Set this ONLY when the conversation NAMES a client (company, brand,
+    person buying from us) that is NOT in the Known-Clients block AND
+    the message is clearly business-related.
+  - Use the canonical brand name as written in the conversation — same
+    capitalisation. Example: "Sodic", "ABB", "Saudi German".
+  - Never set this for vendors, suppliers, internal team members, or
+    family-style chitchat. CLIENT only.
+  - If you set createNewClient, you typically should also set
+    createNewProject (a fresh client probably doesn't have a project yet).
+
+NEW-PROJECT rule (createNewProject):
+  - Set this when the conversation is about a NEW deliverable scope
+    that doesn't fit any of the "Active projects for this client".
+    Example: client has projects "e& Culture" and "Anti-Money
+    Laundering Video", and the conversation is about a brand new
+    "Q3 Sales Conference" — set createNewProject="Q3 Sales Conference".
+  - Use a short noun phrase, no verbs. Title-case.
+  - If you DO set createNewProject, do NOT also set the existing
+    "projectName" field for the task (the sync will use the new
+    project's name automatically).
+  - Leave null when you'd attach the task to an existing project.
+
+START-DATE-vs-DUE-DATE:
+  - startDateGuess = when WORK should begin. Set when the client asked
+    for a specific start ("نبدأ السبت", "kickoff Monday").
+  - dueDateGuess = when work must be FINISHED. Set when the client
+    gave a deadline ("لازم بكره", "by end of week").
+  - Both can be null. Only set what the conversation actually
+    specified — never guess from vibes.`;
 
 const OUTPUT_CONTRACT = `You must respond with ONLY a single JSON object matching this TypeScript type:
 
 {
   "summary": string,          // optional 1–3 sentence summary of the session
   "proposedTasks": Array<{
-    "title": string,          // ≤ 200 chars, imperative: "Send revised proposal to Ahmed"
-    "description": string,    // ≤ 4000 chars; what exactly to do
+    "title": string,          // ≤ 200 chars, imperative — "[Verb] [deliverable] for {client} (contact: {person})"
+    "description": string,    // ≤ 4000 chars; what exactly to do, numbers/dates, next physical action
     "priority": "low" | "med" | "high" | "urgent",
-    "assigneeGuess": string | null,  // if not Islam, name or role; else null
-    "dueDateGuess": string | null,   // ISO 8601 datetime or null
-    "existingInjazTaskId": string | null,  // see CREATE-vs-UPDATE rule below
-    "rationale": string,      // why this task is the right call
+    "assigneeGuess": string | null,         // canonical name from Known Employees, else null
+    "startDateGuess": string | null,        // ISO 8601 — when work should START, or null
+    "dueDateGuess": string | null,          // ISO 8601 — when it must be DONE, or null
+    "existingInjazTaskId": string | null,   // UPDATE existing? id from Existing-Tasks block, else null
+    "createNewClient": string | null,       // see NEW-CLIENT rule below
+    "createNewProject": string | null,      // see NEW-PROJECT rule below
+    "rationale": string,                     // why this task is the right call
     "evidence": Array<{
-      "interactionId": string, // uuid you saw in the input
-      "quote": string          // the exact phrase from the session
+      "interactionId": string,               // uuid from the input
+      "quote": string                        // exact phrase from the session
     }>
   }>
 }
@@ -347,7 +399,10 @@ ${interactionLines.join('\n')}`;
     const lines: string[] = [`=== ACTIVE PROJECTS FOR THIS CLIENT (${projects.length}) ===`];
     for (const p of projects) {
       const desc = p.description ? ` — ${p.description.replace(/\n/g, ' ').slice(0, 120)}` : '';
-      lines.push(`- "${p.name}" (${p.openTaskCount} open task${p.openTaskCount === 1 ? '' : 's'})${desc}`);
+      const lead = p.leadAssigneeName ? ` lead=${p.leadAssigneeName}` : '';
+      lines.push(
+        `- "${p.name}" (${p.openTaskCount} open task${p.openTaskCount === 1 ? '' : 's'}${lead})${desc}`,
+      );
     }
     sections.push('', lines.join('\n'));
   }

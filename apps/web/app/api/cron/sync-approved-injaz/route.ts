@@ -17,6 +17,8 @@ import {
 } from '@nexus/db';
 import {
   createInjazTask,
+  createInjazParty,
+  createInjazProject,
   injazClientFromEnv,
   type InjazError,
   supabaseStorageCredsFromEnv,
@@ -76,10 +78,14 @@ export async function GET(req: NextRequest) {
         title: proposedTasksTable.title,
         description: proposedTasksTable.description,
         priorityGuess: proposedTasksTable.priorityGuess,
+        startDateGuess: proposedTasksTable.startDateGuess,
         dueDateGuess: proposedTasksTable.dueDateGuess,
         assigneeGuess: proposedTasksTable.assigneeGuess,
         assigneeInjazUserName: proposedTasksTable.assigneeInjazUserName,
         injazExistingTaskId: proposedTasksTable.injazExistingTaskId,
+        createClientName: proposedTasksTable.createClientName,
+        createProjectName: proposedTasksTable.createProjectName,
+        injazPartyName: contactsTable.injazPartyName,
         injazProjectName: contactsTable.injazProjectName,
       })
       .from(proposedTasksTable)
@@ -127,6 +133,34 @@ export async function GET(req: NextRequest) {
         // routes the task into the right Injaz project.
         const assignee = task.assigneeInjazUserName ?? task.assigneeGuess ?? null;
 
+        // Auto-provision client/project if the AI flagged them as new.
+        // Both helpers treat "already exists" as a no-op success, so
+        // it's safe to call them every time the field is set — even
+        // if the AI got confused about whether it was new.
+        let resolvedClientName = task.injazPartyName ?? null;
+        if (task.createClientName) {
+          await createInjazParty(client, { name: task.createClientName, type: 'CLIENT' });
+          resolvedClientName = task.createClientName;
+        }
+        let resolvedProjectName = task.injazProjectName ?? null;
+        if (task.createProjectName) {
+          await createInjazProject(client, {
+            name: task.createProjectName,
+            clientName: resolvedClientName ?? undefined,
+            description: `Auto-created from Nexus session ${task.sessionId.slice(0, 8)}`,
+            status: 'ACTIVE',
+          });
+          resolvedProjectName = task.createProjectName;
+        }
+
+        // Convert Date columns to ISO strings for the MCP wrapper.
+        const startDateIso = task.startDateGuess
+          ? (task.startDateGuess as unknown as Date).toISOString()
+          : null;
+        const dueDateIso = task.dueDateGuess
+          ? (task.dueDateGuess as unknown as Date).toISOString()
+          : null;
+
         // Branch on whether the AI flagged this as updating an existing
         // Injaz task or creating a fresh one. The flag was already
         // validated against the snapshot of open tasks shown to the
@@ -138,9 +172,10 @@ export async function GET(req: NextRequest) {
             title: task.title,
             description,
             priority: task.priorityGuess,
-            dueDate: task.dueDateGuess ? (task.dueDateGuess as unknown as string) : null,
+            startDate: startDateIso,
+            dueDate: dueDateIso,
             assignee,
-            projectName: task.injazProjectName ?? undefined,
+            projectName: resolvedProjectName ?? undefined,
           });
           injazId = task.injazExistingTaskId;
           syncMode = 'updated';
@@ -149,9 +184,10 @@ export async function GET(req: NextRequest) {
             title: task.title,
             description,
             priority: task.priorityGuess,
-            dueDate: task.dueDateGuess ? (task.dueDateGuess as unknown as string) : null,
+            startDate: startDateIso,
+            dueDate: dueDateIso,
             assignee,
-            projectName: task.injazProjectName ?? undefined,
+            projectName: resolvedProjectName ?? undefined,
             externalRefId: task.id,
           });
           injazId = injazTask.id;
