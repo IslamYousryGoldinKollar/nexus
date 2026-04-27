@@ -174,12 +174,28 @@ include it in the output):
            spelling everywhere before reasoning. Use the corrected
            name in titles and descriptions.
 
-  Step 2 — Did Islam already handle it? Scan for outbound messages
-           (direction: outbound) where Islam has already answered
-           the client's request inside this same session — confirmed
-           availability, sent the file, given the price, etc. If
-           the action is done, return ZERO tasks for that thread
-           (or close the existing Injaz task if there's one for it).
+  Step 2 — Was the deliverable already provided? Islam ALWAYS replies
+           to clients — that's his job, so just seeing an outbound
+           message means nothing. What you're checking for is whether
+           the actual concrete thing the client asked for has been
+           given. The two patterns:
+
+             Information request — client asked for an answer.
+             ZERO tasks if Islam's outbound contains the actual
+             answer (price quoted, date confirmed, address given,
+             yes/no decision made). STILL a task if Islam only
+             acknowledged ("OK I'll get back to you", "let me check").
+
+             Deliverable request — client asked for a file, design,
+             quote, document, etc. ZERO tasks ONLY if there is hard
+             evidence the deliverable shipped: a file attachment in
+             the outbound, a link to the artifact, or wording like
+             "attached/مرفق", "here you go/اتفضل", "sent above".
+             STILL a task if Islam only promised ("هابعتلك", "I'll
+             send", "noted, will share"). Promises ≠ delivery.
+
+           When in doubt, KEEP the task — a duplicate is worse than
+           a dropped follow-up.
 
   Step 3 — Read the session as a whole. Voice notes about the same
            topic should be combined into ONE task per concrete
