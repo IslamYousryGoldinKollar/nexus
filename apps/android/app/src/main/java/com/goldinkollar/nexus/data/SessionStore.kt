@@ -99,6 +99,43 @@ class SessionStore private constructor(context: Context) {
         }
     }
 
+    /**
+     * Set of E.164-normalised phone numbers whose call recordings the
+     * user has explicitly opted in to upload. The recording filename
+     * usually carries the counterparty number (e.g.
+     * `+201234567890_2026-04-28.m4a`), and UploadRecordingWorker
+     * checks this set before sending bytes to Nexus. An empty set
+     * means "default-deny — upload nothing" so a fresh install can't
+     * silently leak personal calls before the user has reviewed
+     * their contacts.
+     */
+    fun optedInRecordingPhones(): Set<String> =
+        prefs.getStringSet(KEY_OPTED_IN_PHONES, emptySet()) ?: emptySet()
+
+    fun setOptedInRecordingPhones(phones: Set<String>) {
+        prefs.edit().putStringSet(KEY_OPTED_IN_PHONES, phones).apply()
+    }
+
+    fun togglePhoneOptIn(phoneE164: String, optedIn: Boolean): Set<String> {
+        val current = optedInRecordingPhones().toMutableSet()
+        if (optedIn) current.add(phoneE164) else current.remove(phoneE164)
+        prefs.edit().putStringSet(KEY_OPTED_IN_PHONES, current).apply()
+        return current
+    }
+
+    /**
+     * Master switch for the contact-policy filter. When OFF, the
+     * upload worker bypasses the allowlist entirely and uploads
+     * every recording — useful for the first run when the user
+     * hasn't curated their contacts yet. Default is ON (default-deny).
+     */
+    val recordingFilterEnabled: Boolean
+        get() = prefs.getBoolean(KEY_RECORDING_FILTER_ENABLED, true)
+
+    fun setRecordingFilterEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_RECORDING_FILTER_ENABLED, enabled).apply()
+    }
+
     fun store(apiKey: String, userId: String, deviceId: String) {
         prefs.edit()
             .putString(KEY_API, apiKey)
@@ -132,6 +169,8 @@ class SessionStore private constructor(context: Context) {
         private const val KEY_BASE_URL = "base_url"
         private const val KEY_RECORDING_FOLDER_URI = "recording_folder_uri"
         private const val KEY_SEEN_RECORDING_IDS = "seen_recording_ids"
+        private const val KEY_OPTED_IN_PHONES = "opted_in_recording_phones"
+        private const val KEY_RECORDING_FILTER_ENABLED = "recording_filter_enabled"
         // Vercel canonical alias. nexus.theoffsight.com isn't in DNS yet;
         // switch to it once the CNAME is added at the registrar.
         private const val DEFAULT_BASE_URL = "https://nexus-beta-coral.vercel.app"

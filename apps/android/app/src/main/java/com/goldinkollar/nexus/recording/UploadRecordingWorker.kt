@@ -6,6 +6,7 @@ import android.provider.DocumentsContract
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.goldinkollar.nexus.data.ContactsRepository
 import com.goldinkollar.nexus.data.SessionStore
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
@@ -61,6 +62,45 @@ class UploadRecordingWorker(
         }
     }
 
+    /**
+     * Privacy gate. Returns true when the recording's counterparty is
+     * one the user has explicitly opted in to upload. Returns true
+     * unconditionally when the master filter is OFF (upload-all
+     * mode). Returns false otherwise.
+     *
+     * `filename` is the recorder-app filename, which usually carries
+     * the phone number — e.g. "+201234567890_2026-04-28.m4a" or
+     * "Call_+201234567890_outgoing.m4a". When we can't parse a phone
+     * number out, we DROP (return false) — without a counterparty
+     * there's no way to consent and we'd rather miss recordings than
+     * leak personal calls.
+     */
+    private fun shouldUpload(store: SessionStore, filename: String): Boolean {
+        if (!store.recordingFilterEnabled) return true
+        val phone = extractPhone(filename) ?: run {
+            Log.i(TAG, "skipping (no phone in filename): $filename")
+            return false
+        }
+        val opted = store.optedInRecordingPhones()
+        if (phone in opted) return true
+        Log.i(TAG, "skipping (not opted in): $phone — $filename")
+        return false
+    }
+
+    private fun extractPhone(filename: String): String? {
+        // Common patterns we've seen across recorder apps:
+        //   +201234567890_2026-04-28.m4a            ← +CC inline
+        //   Call_+201234567890_outgoing.m4a         ← +CC with prefix
+        //   201234567890_2026-04-28.m4a             ← bare CC
+        //   01234567890_2026-04-28.m4a              ← Egypt local
+        //
+        // Try +CC first (most reliable), then fall back to local.
+        val plus = Regex("\\+\\d{8,15}").find(filename)?.value
+        if (plus != null) return plus
+        val bare = Regex("\\b\\d{8,15}\\b").find(filename)?.value ?: return null
+        return ContactsRepository.normalizeE164(bare)
+    }
+
     private suspend fun uploadFromContentUri(
         store: SessionStore,
         apiKey: String,
@@ -72,6 +112,14 @@ class UploadRecordingWorker(
             return Result.failure()
         }
         if (meta.size < 1024L) return Result.failure()
+
+        // Privacy filter: skip recordings from contacts not on the
+        // opt-in list. We mark the document as 'seen' so the polling
+        // observer doesn't re-evaluate it on every tick.
+        if (!shouldUpload(store, meta.displayName)) {
+            store.markRecordingSeen(meta.documentId)
+            return Result.success()
+        }
 
         val bytes = try {
             resolver.openInputStream(docUri)?.use(InputStream::readBytes)
@@ -97,6 +145,7 @@ class UploadRecordingWorker(
         file: File,
     ): Result {
         if (!file.exists() || file.length() == 0L) return Result.failure()
+        if (!shouldUpload(store, file.name)) return Result.success()
         return doUpload(
             store = store,
             apiKey = apiKey,

@@ -48,6 +48,15 @@ fun ApprovalsScreen() {
     val api = remember { NexusApi(store.baseUrl) { store.apiKey } }
     val scope = rememberCoroutineScope()
 
+    // In-app routing — only two screens for now (Approvals and the
+    // contact-policy editor) so a tiny string-keyed switch beats
+    // pulling Compose-Navigation in.
+    var route by remember { mutableStateOf("approvals") }
+    if (route == "contactPolicy") {
+        ContactPolicyScreen(onBack = { route = "approvals" })
+        return
+    }
+
     var loading by remember { mutableStateOf(true) }
     var sessions by remember { mutableStateOf<List<SessionCard>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -73,7 +82,7 @@ fun ApprovalsScreen() {
         }
         Spacer(Modifier.height(12.dp))
 
-        RecordingControl()
+        RecordingControl(onContactPolicyClick = { route = "contactPolicy" })
         Spacer(Modifier.height(12.dp))
 
         if (loading) {

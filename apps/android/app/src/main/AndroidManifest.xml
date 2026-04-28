@@ -26,6 +26,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
+    <!-- Contacts read access — used by ContactPolicyScreen so the
+         user can pick which contacts have their call recordings
+         uploaded. The matching for "is this number opted in?"
+         happens in UploadRecordingWorker by parsing the phone
+         number out of the recording filename. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
     <!-- Optional Wave-B fallback (mic-only recording). Uncomment if needed.
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />

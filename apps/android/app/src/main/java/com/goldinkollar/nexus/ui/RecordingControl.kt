@@ -54,13 +54,14 @@ import com.goldinkollar.nexus.recording.RecordingObserverService
  * foreground service can show its persistent notification.
  */
 @Composable
-fun RecordingControl() {
+fun RecordingControl(onContactPolicyClick: () -> Unit = {}) {
     val context = LocalContext.current
     val store = remember { SessionStore.shared(context) }
 
     var enabled by remember { mutableStateOf(isServiceRunning(context)) }
     var folderUri by remember { mutableStateOf(store.recordingFolderUri) }
     var notifGranted by remember { mutableStateOf(hasNotificationPermission(context)) }
+    val optedInCount = remember { store.optedInRecordingPhones().size }
 
     LaunchedEffect(Unit) {
         notifGranted = hasNotificationPermission(context)
@@ -180,12 +181,37 @@ fun RecordingControl() {
             if (folderUri == null) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Tip: most recorder apps save under " +
-                        "\"Cube Call Recorder\", \"Recordings\", or " +
-                        "\"Recorder\" inside your phone's Internal storage.",
+                    "Tip: on Android 14+, OS-level call recordings live under " +
+                        "Internal storage → Recordings → Call. " +
+                        "Older builds & third-party recorders use " +
+                        "\"Cube Call Recorder\" / \"Recorder\".",
                     style = MaterialTheme.typography.bodySmall,
                     color = AssistChipDefaults.assistChipColors().labelColor,
                 )
+            }
+
+            // Per-contact opt-in entry. Default-deny: if the user has
+            // not opted in any contacts, the upload worker drops every
+            // recording until they curate their allowlist here.
+            Spacer(Modifier.height(12.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Contact filter",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        if (optedInCount == 0)
+                            "Default-deny — no recordings will upload until you opt in"
+                        else "$optedInCount contact${if (optedInCount == 1) "" else "s"} opted in",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                }
+                TextButton(onClick = onContactPolicyClick) { Text("Manage →") }
             }
         }
     }
