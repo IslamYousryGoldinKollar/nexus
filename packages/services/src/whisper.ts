@@ -62,11 +62,14 @@ export async function transcribeWithWhisper(args: {
   }
   const bytes = new Uint8Array(await downloadRes.arrayBuffer());
 
-  // OpenAI detects file format from the *filename extension* (not Content-Type).
-  // Supported: flac, m4a, mp3, mp4, mpeg, mpga, oga, ogg, wav, webm.
-  // WhatsApp voice notes are `audio/ogg; codecs=opus` → we must pass `.ogg`
-  // or the API returns 400 "Unrecognized file format".
-  const extFromMime = (() => {
+  // OpenAI detects file format from the *filename extension* (not
+  // Content-Type). Supported: flac, m4a, mp3, mp4, mpeg, mpga, oga,
+  // ogg, wav, webm. We can't trust the upstream MIME (Android's
+  // DocumentsContract regularly mislabels .m4a as audio/mpeg), so
+  // sniff the actual byte signature first; only fall back to the
+  // declared MIME when the signature is unrecognised.
+  const sniffed = sniffAudioExtension(bytes);
+  const extFromMime = sniffed ?? (() => {
     const m = mimeType.toLowerCase().split(';')[0]?.trim() ?? '';
     if (m.includes('ogg')) return 'ogg';
     if (m.includes('mp4')) return 'mp4';
@@ -119,4 +122,64 @@ export async function transcribeWithWhisper(args: {
     costUsdMillis,
     provider: 'whisper',
   };
+}
+
+/**
+ * Recognise the audio container format from the first dozen bytes.
+ * Returns the OpenAI-Whisper-compatible extension when confident,
+ * else null so the caller falls back to the declared MIME.
+ *
+ * Signatures we handle:
+ *   - M4A / MP4 / 3GP — `....ftyp<brand>` at offset 4 (ISO BMFF)
+ *   - Ogg (Vorbis, Opus) — `OggS` magic
+ *   - WAV — `RIFF....WAVE`
+ *   - WebM / Matroska — EBML header `1A 45 DF A3`
+ *   - FLAC — `fLaC` magic
+ *   - MP3 — ID3 tag (`ID3`) or sync word (0xFF E0+)
+ *
+ * Anything else returns null. We deliberately don't return `mp4`
+ * for `ftyp` because Whisper treats `.m4a` and `.mp4` differently
+ * for some sub-brands and `.m4a` is the safer pick for audio-only.
+ */
+function sniffAudioExtension(bytes: Uint8Array): string | null {
+  if (bytes.length < 12) return null;
+  // ISO BMFF (M4A / MP4 / 3GP): "ftyp" at bytes 4..8
+  if (
+    bytes[4] === 0x66 && // f
+    bytes[5] === 0x74 && // t
+    bytes[6] === 0x79 && // y
+    bytes[7] === 0x70    // p
+  ) {
+    return 'm4a';
+  }
+  // OggS
+  if (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
+    return 'ogg';
+  }
+  // RIFF....WAVE
+  if (
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x41 && bytes[10] === 0x56 && bytes[11] === 0x45
+  ) {
+    return 'wav';
+  }
+  // Matroska / WebM EBML header
+  if (
+    bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3
+  ) {
+    return 'webm';
+  }
+  // FLAC
+  if (bytes[0] === 0x66 && bytes[1] === 0x4c && bytes[2] === 0x61 && bytes[3] === 0x43) {
+    return 'flac';
+  }
+  // MP3: ID3 tag
+  if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) {
+    return 'mp3';
+  }
+  // MP3: sync word (0xFF then 0xE0..0xFF)
+  if (bytes[0] === 0xff && (bytes[1] !== undefined) && (bytes[1] & 0xe0) === 0xe0) {
+    return 'mp3';
+  }
+  return null;
 }

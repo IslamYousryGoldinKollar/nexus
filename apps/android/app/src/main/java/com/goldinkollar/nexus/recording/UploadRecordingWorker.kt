@@ -312,8 +312,20 @@ class UploadRecordingWorker(
     }
 
     private fun mimeFromString(declared: String?, filename: String): String {
+        // PREFER extension-derived MIME over the OS-declared one for known
+        // audio formats. Android's DocumentsContract regularly mislabels
+        // .m4a files as `audio/mpeg` (it conflates the MP4 container with
+        // MPEG-1/2 audio), which then causes:
+        //   - server stores file with .mpeg extension
+        //   - OpenAI Whisper tries to decode as MP3, fails with
+        //     "Invalid file format" on the actual M4A bytes
+        // Trusting the extension fixes this for every known audio
+        // container we serve. We only fall back to the declared MIME for
+        // unknown extensions.
+        val byExt = extensionMime(filename)
+        if (byExt != "application/octet-stream") return byExt
         if (declared != null && declared != "application/octet-stream") return declared
-        return extensionMime(filename)
+        return "application/octet-stream"
     }
 
     private fun extensionMime(filename: String): String =
