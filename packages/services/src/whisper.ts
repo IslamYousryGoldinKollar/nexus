@@ -60,7 +60,7 @@ export async function transcribeWithWhisper(args: {
   if (!downloadRes.ok) {
     throw new WhisperError(`download audio failed: ${downloadRes.status}`, downloadRes.status);
   }
-  const bytes = new Uint8Array(await downloadRes.arrayBuffer());
+  const rawBytes = new Uint8Array(await downloadRes.arrayBuffer());
 
   // OpenAI detects file format from the *filename extension* (not
   // Content-Type). Supported: flac, m4a, mp3, mp4, mpeg, mpga, oga,
@@ -68,22 +68,21 @@ export async function transcribeWithWhisper(args: {
   // DocumentsContract regularly mislabels .m4a as audio/mpeg), so
   // sniff the actual byte signature first; only fall back to the
   // declared MIME when the signature is unrecognised.
-  const sniffed = sniffAudioExtension(bytes);
-  const extFromMime = sniffed ?? (() => {
-    const m = mimeType.toLowerCase().split(';')[0]?.trim() ?? '';
-    if (m.includes('ogg')) return 'ogg';
-    if (m.includes('mp4')) return 'mp4';
-    if (m.includes('mpeg')) return 'mp3';
-    if (m.includes('mp3')) return 'mp3';
-    if (m.includes('wav') || m.includes('wave')) return 'wav';
-    if (m.includes('webm')) return 'webm';
-    if (m.includes('flac')) return 'flac';
-    if (m.includes('m4a') || m.includes('aac')) return 'm4a';
-    return 'ogg'; // sensible default for WhatsApp
-  })();
-  const fileName = args.fileName ?? `audio.${extFromMime}`;
+  //
+  // For ISO BMFF files (anything with `ftyp`), Whisper's MP4/M4A
+  // decoders are *brand-aware* — they reject `3gp4`/`3gp5`/`qt  `
+  // even when the codec inside is regular AAC. Empirically the only
+  // way to get Whisper to accept these is to rewrite the major brand
+  // to `M4A ` and send with `.m4a`. The codec bitstream (`mp4a`) is
+  // already valid; we're just relabeling the container header.
+  const { bytes, ext } = normaliseForWhisper(rawBytes, mimeType);
+  const fileName = args.fileName ?? `audio.${ext}`;
 
-  const blob = new Blob([bytes], { type: mimeType });
+  // Send with a generic content type — extension is what Whisper reads.
+  // Cast through Uint8Array<ArrayBuffer> to satisfy lib.dom's BlobPart.
+  const blob = new Blob([bytes as unknown as BlobPart], {
+    type: ext === 'm4a' ? 'audio/m4a' : mimeType,
+  });
   const form = new FormData();
   form.append('file', blob, fileName);
   form.append('model', modelId);
@@ -125,75 +124,134 @@ export async function transcribeWithWhisper(args: {
 }
 
 /**
- * Recognise the audio container format from the first dozen bytes.
- * Returns the OpenAI-Whisper-compatible extension when confident,
- * else null so the caller falls back to the declared MIME.
+ * Pick the right extension for Whisper, and rewrite the ISO BMFF
+ * `ftyp` major brand when needed so Whisper's M4A decoder accepts
+ * the file.
  *
- * Signatures we handle:
- *   - M4A / MP4 / 3GP — `....ftyp<brand>` at offset 4 (ISO BMFF)
- *   - Ogg (Vorbis, Opus) — `OggS` magic
- *   - WAV — `RIFF....WAVE`
- *   - WebM / Matroska — EBML header `1A 45 DF A3`
- *   - FLAC — `fLaC` magic
- *   - MP3 — ID3 tag (`ID3`) or sync word (0xFF E0+)
+ * Whisper's accepted formats: flac, m4a, mp3, mp4, mpeg, mpga, oga,
+ * ogg, wav, webm. The catch: for ISO BMFF containers (anything with
+ * `ftyp` at offset 4) Whisper inspects the *major brand* and rejects
+ * `3gp4` / `3gp5` / `3g2a` / `qt  ` with "Invalid file format" even
+ * when the codec inside is plain AAC (`mp4a`). Empirically:
+ *   - `M4A ` / `M4B ` / `M4P ` brands → accepted as `.m4a`
+ *   - `mp42` / `isom` / `mp41` brands → accepted as `.mp4`
+ *   - everything else → rejected with EVERY extension
  *
- * Anything else returns null. We deliberately don't return `mp4`
- * for `ftyp` because Whisper treats `.m4a` and `.mp4` differently
- * for some sub-brands and `.m4a` is the safer pick for audio-only.
+ * Android's native call recorder (Pixel/Samsung from 14+) writes
+ * `3gp4` despite muxing AAC, which is what shows up in the wild.
+ * Renaming the file is not enough — Whisper reads the brand bytes,
+ * not just the filename.
+ *
+ * Fix: when we see a non-M4A `ftyp` brand wrapping AAC, rewrite the
+ * brand bytes in-place to `M4A ` (and the matching compat brand to
+ * `mp41`) and send as `.m4a`. The `mp4a` codec bitstream is already
+ * valid; we're just relabeling the container header. Confirmed
+ * working with real 3gp4-branded recordings from Android.
+ *
+ * Other containers (Ogg, WAV, WebM, FLAC, MP3) pass through unchanged.
  */
-function sniffAudioExtension(bytes: Uint8Array): string | null {
-  if (bytes.length < 12) return null;
-  // ISO BMFF (M4A / MP4 / 3GP): "ftyp" at bytes 4..8 followed by a
-  // 4-byte major brand at bytes 8..12. Whisper's M4A decoder is
-  // strict about the brand — it accepts "M4A " / "M4B " / "mp42" /
-  // "isom" but rejects "3gp4" / "3gp5" / "3g2a" with "Invalid file
-  // format" even though those still wrap AAC audio. The MP4 decoder
-  // is more permissive, so route 3GP brands through `.mp4`.
-  if (
-    bytes[4] === 0x66 && // f
-    bytes[5] === 0x74 && // t
-    bytes[6] === 0x79 && // y
-    bytes[7] === 0x70    // p
-  ) {
-    const brand = String.fromCharCode(
-      bytes[8] ?? 0,
-      bytes[9] ?? 0,
-      bytes[10] ?? 0,
-      bytes[11] ?? 0,
-    );
-    if (brand === 'M4A ' || brand === 'M4B ' || brand === 'M4P ') return 'm4a';
-    // Everything else with ftyp (mp4, isom, 3gp4, 3gp5, 3g2a, qt …)
-    // → `.mp4` extension. Whisper's mp4 decoder handles them all.
-    return 'mp4';
+function normaliseForWhisper(
+  input: Uint8Array,
+  mimeType: string,
+): { bytes: Uint8Array; ext: string } {
+  if (input.length >= 12 && isFtyp(input)) {
+    const brand = readBrand(input, 8);
+    if (brand === 'M4A ' || brand === 'M4B ' || brand === 'M4P ') {
+      return { bytes: input, ext: 'm4a' };
+    }
+    if (brand === 'mp41' || brand === 'mp42' || brand === 'isom') {
+      // Whisper accepts these natively as .mp4. Could also relabel to
+      // M4A — both work — but leave as-is to minimise byte mutation.
+      return { bytes: input, ext: 'mp4' };
+    }
+    // Anything else (3gp4, 3gp5, 3g2a, qt, mp4a-as-brand, …): copy
+    // bytes (don't mutate the caller's buffer) and rewrite the major
+    // brand to M4A and any 3gp* in compat list to mp41. Whisper then
+    // accepts as .m4a. We keep `isom` if present in compat — that's
+    // already friendly.
+    const out = new Uint8Array(input);
+    writeBrand(out, 8, 'M4A ');
+    // Rewrite compat brands at offsets 16, 20, 24 ... up to end of
+    // ftyp box (size at offset 0..3, big-endian).
+    const ftypSize = readU32BE(out, 0);
+    for (let off = 16; off + 4 <= ftypSize && off + 4 <= out.length; off += 4) {
+      const b = readBrand(out, off);
+      if (b.startsWith('3g') || b === 'qt  ') {
+        writeBrand(out, off, 'mp41');
+      }
+    }
+    return { bytes: out, ext: 'm4a' };
   }
   // OggS
-  if (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
-    return 'ogg';
+  if (input[0] === 0x4f && input[1] === 0x67 && input[2] === 0x67 && input[3] === 0x53) {
+    return { bytes: input, ext: 'ogg' };
   }
   // RIFF....WAVE
   if (
-    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
-    bytes[8] === 0x57 && bytes[9] === 0x41 && bytes[10] === 0x56 && bytes[11] === 0x45
+    input.length >= 12 &&
+    input[0] === 0x52 && input[1] === 0x49 && input[2] === 0x46 && input[3] === 0x46 &&
+    input[8] === 0x57 && input[9] === 0x41 && input[10] === 0x56 && input[11] === 0x45
   ) {
-    return 'wav';
+    return { bytes: input, ext: 'wav' };
   }
   // Matroska / WebM EBML header
-  if (
-    bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3
-  ) {
-    return 'webm';
+  if (input[0] === 0x1a && input[1] === 0x45 && input[2] === 0xdf && input[3] === 0xa3) {
+    return { bytes: input, ext: 'webm' };
   }
   // FLAC
-  if (bytes[0] === 0x66 && bytes[1] === 0x4c && bytes[2] === 0x61 && bytes[3] === 0x43) {
-    return 'flac';
+  if (input[0] === 0x66 && input[1] === 0x4c && input[2] === 0x61 && input[3] === 0x43) {
+    return { bytes: input, ext: 'flac' };
   }
-  // MP3: ID3 tag
-  if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) {
-    return 'mp3';
+  // MP3: ID3 tag, or sync word (0xFF then 0xE0..0xFF)
+  if (input[0] === 0x49 && input[1] === 0x44 && input[2] === 0x33) {
+    return { bytes: input, ext: 'mp3' };
   }
-  // MP3: sync word (0xFF then 0xE0..0xFF)
-  if (bytes[0] === 0xff && (bytes[1] !== undefined) && (bytes[1] & 0xe0) === 0xe0) {
-    return 'mp3';
+  if (input[0] === 0xff && input[1] !== undefined && (input[1] & 0xe0) === 0xe0) {
+    return { bytes: input, ext: 'mp3' };
   }
-  return null;
+  // Unknown signature — fall back to the declared MIME.
+  const m = mimeType.toLowerCase().split(';')[0]?.trim() ?? '';
+  let ext = 'ogg'; // sensible default for WhatsApp
+  if (m.includes('ogg')) ext = 'ogg';
+  else if (m.includes('mp4')) ext = 'mp4';
+  else if (m.includes('mpeg') || m.includes('mp3')) ext = 'mp3';
+  else if (m.includes('wav') || m.includes('wave')) ext = 'wav';
+  else if (m.includes('webm')) ext = 'webm';
+  else if (m.includes('flac')) ext = 'flac';
+  else if (m.includes('m4a') || m.includes('aac')) ext = 'm4a';
+  return { bytes: input, ext };
+}
+
+function isFtyp(b: Uint8Array): boolean {
+  return (
+    b[4] === 0x66 && // f
+    b[5] === 0x74 && // t
+    b[6] === 0x79 && // y
+    b[7] === 0x70    // p
+  );
+}
+
+function readBrand(b: Uint8Array, off: number): string {
+  return String.fromCharCode(
+    b[off] ?? 0,
+    b[off + 1] ?? 0,
+    b[off + 2] ?? 0,
+    b[off + 3] ?? 0,
+  );
+}
+
+function writeBrand(b: Uint8Array, off: number, brand: string): void {
+  b[off] = brand.charCodeAt(0);
+  b[off + 1] = brand.charCodeAt(1);
+  b[off + 2] = brand.charCodeAt(2);
+  b[off + 3] = brand.charCodeAt(3);
+}
+
+function readU32BE(b: Uint8Array, off: number): number {
+  return (
+    ((b[off] ?? 0) << 24) |
+    ((b[off + 1] ?? 0) << 16) |
+    ((b[off + 2] ?? 0) << 8) |
+    (b[off + 3] ?? 0)
+  ) >>> 0;
 }
