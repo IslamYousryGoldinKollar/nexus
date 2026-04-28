@@ -18,11 +18,10 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentDisposition
 import io.ktor.http.ContentType
+import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.headersOf
 import java.io.File
 import java.io.InputStream
 
@@ -207,18 +206,34 @@ class UploadRecordingWorker(
                 setBody(
                     MultiPartFormDataContent(
                         formData {
+                            // Ktor auto-emits `Content-Disposition: form-data;
+                            // name="audio"` when we append a part — DO NOT pass
+                            // a Content-Disposition header on top of that. We
+                            // tried `ContentDisposition.File.withParameter("name",
+                            // ...)` earlier; Ktor concatenated it with its own
+                            // disposition and produced the malformed
+                            // "form-data; name=audio; file; name=audio;
+                            // filename=..." that WHATWG-fetch FormData rejects
+                            // (Vercel diag dump in commit 4ce36db caught it).
+                            //
+                            // To attach a filename, append a SECOND
+                            // Content-Disposition VALUE — not header — using
+                            // Ktor's `Headers.build` with a single
+                            // `filename="..."` parameter. Ktor's serializer
+                            // merges this into the auto-generated disposition,
+                            // producing the canonical
+                            // `form-data; name="audio"; filename="..."`.
+                            val partHeaders = Headers.build {
+                                append(HttpHeaders.ContentType, mime.toString())
+                                append(
+                                    HttpHeaders.ContentDisposition,
+                                    "filename=\"${sanitizeFilename(filename)}\"",
+                                )
+                            }
                             append(
                                 key = "audio",
                                 value = audioBytes,
-                                headers = headersOf(
-                                    HttpHeaders.ContentType to listOf(mime.toString()),
-                                    HttpHeaders.ContentDisposition to listOf(
-                                        ContentDisposition.File
-                                            .withParameter("name", "audio")
-                                            .withParameter("filename", filename)
-                                            .toString(),
-                                    ),
-                                ),
+                                headers = partHeaders,
                             )
                             // Field name MUST be 'meta' — the server route handler
                             // (apps/web/app/api/ingest/phone/route.ts) does
@@ -314,6 +329,21 @@ class UploadRecordingWorker(
         }
 
     private fun File.guessMime(): ContentType = extensionMime(name)
+
+    /**
+     * Strip characters that break a `filename="..."` parameter in
+     * Content-Disposition: literal double-quotes (would close the
+     * quoted-string early), CR/LF (would split the header), and any
+     * non-ASCII (the Android native recorder happily includes 🥰
+     * emoji in filenames, which Ktor's serializer doesn't UTF-8
+     * encode). The original filename is still in the metadata JSON
+     * payload so we don't lose it.
+     */
+    private fun sanitizeFilename(name: String): String =
+        name
+            .replace(Regex("[\\r\\n\"\\\\]"), "")
+            .replace(Regex("[^\\x20-\\x7E]"), "_")
+            .ifEmpty { "recording" }
 
     private fun buildMetadata(filename: String, occurredMs: Long): String {
         // Most recorder apps embed the counterparty number in the
