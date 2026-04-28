@@ -124,6 +124,54 @@ class SessionStore private constructor(context: Context) {
     }
 
     /**
+     * Set of normalised contact display names whose recordings the
+     * user has opted in to upload. Android 14+'s native call recorder
+     * names files after the address-book entry (e.g.
+     * "Mirna Sherif_2026-04-28.m4a"), so we match against this set
+     * BEFORE the phone-number set in UploadRecordingWorker.
+     *
+     * Names are stored lowercased + whitespace-collapsed so the
+     * filename matcher can work with any capitalisation/spacing the
+     * recorder app produces.
+     */
+    fun optedInRecordingNames(): Set<String> =
+        prefs.getStringSet(KEY_OPTED_IN_NAMES, emptySet()) ?: emptySet()
+
+    /**
+     * Toggle a whole contact (display name + every phone number) in
+     * one shot. ContactPolicyScreen calls this when the user flips a
+     * row's switch — saves us doing two separate writes for every
+     * tap and keeps the two sets in sync.
+     */
+    fun setContactOptIn(
+        displayName: String,
+        phoneNumbersE164: List<String>,
+        optedIn: Boolean,
+    ): Pair<Set<String>, Set<String>> {
+        val nameKey = normalizeName(displayName)
+        val names = optedInRecordingNames().toMutableSet()
+        val phones = optedInRecordingPhones().toMutableSet()
+        if (optedIn) {
+            if (nameKey.isNotEmpty()) names.add(nameKey)
+            phones.addAll(phoneNumbersE164)
+        } else {
+            names.remove(nameKey)
+            phones.removeAll(phoneNumbersE164.toSet())
+        }
+        prefs.edit()
+            .putStringSet(KEY_OPTED_IN_NAMES, names)
+            .putStringSet(KEY_OPTED_IN_PHONES, phones)
+            .apply()
+        return names to phones
+    }
+
+    /** Lowercase + collapse whitespace. Used everywhere we compare
+     *  contact display names, so capitalisation / extra spaces from
+     *  the recorder filename don't break matching. */
+    fun normalizeName(s: String): String =
+        s.trim().lowercase().replace(Regex("\\s+"), " ")
+
+    /**
      * Master switch for the contact-policy filter. When OFF, the
      * upload worker bypasses the allowlist entirely and uploads
      * every recording — useful for the first run when the user
@@ -170,6 +218,7 @@ class SessionStore private constructor(context: Context) {
         private const val KEY_RECORDING_FOLDER_URI = "recording_folder_uri"
         private const val KEY_SEEN_RECORDING_IDS = "seen_recording_ids"
         private const val KEY_OPTED_IN_PHONES = "opted_in_recording_phones"
+        private const val KEY_OPTED_IN_NAMES = "opted_in_recording_names"
         private const val KEY_RECORDING_FILTER_ENABLED = "recording_filter_enabled"
         // Vercel canonical alias. nexus.theoffsight.com isn't in DNS yet;
         // switch to it once the CNAME is added at the registrar.

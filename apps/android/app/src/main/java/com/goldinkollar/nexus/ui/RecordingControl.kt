@@ -61,7 +61,10 @@ fun RecordingControl(onContactPolicyClick: () -> Unit = {}) {
     var enabled by remember { mutableStateOf(isServiceRunning(context)) }
     var folderUri by remember { mutableStateOf(store.recordingFolderUri) }
     var notifGranted by remember { mutableStateOf(hasNotificationPermission(context)) }
-    val optedInCount = remember { store.optedInRecordingPhones().size }
+    // Show the contact-name count rather than phone count — it's
+    // 1:1 with the toggle the user actually flipped, even when a
+    // contact has multiple numbers.
+    val optedInCount = remember { store.optedInRecordingNames().size }
 
     LaunchedEffect(Unit) {
         notifGranted = hasNotificationPermission(context)

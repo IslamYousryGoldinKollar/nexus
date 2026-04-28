@@ -65,25 +65,51 @@ class UploadRecordingWorker(
     /**
      * Privacy gate. Returns true when the recording's counterparty is
      * one the user has explicitly opted in to upload. Returns true
-     * unconditionally when the master filter is OFF (upload-all
-     * mode). Returns false otherwise.
+     * unconditionally when the master filter is OFF.
      *
-     * `filename` is the recorder-app filename, which usually carries
-     * the phone number — e.g. "+201234567890_2026-04-28.m4a" or
-     * "Call_+201234567890_outgoing.m4a". When we can't parse a phone
-     * number out, we DROP (return false) — without a counterparty
-     * there's no way to consent and we'd rather miss recordings than
-     * leak personal calls.
+     * Two recognition paths:
+     *
+     *   1. Contact NAME (Android 14+ native recorder writes
+     *      "<Display Name>_YYMMDD_HHMMSS.m4a"). We lowercase the
+     *      filename and check whether any opted-in normalised name
+     *      appears as a substring.
+     *
+     *   2. Phone NUMBER (third-party recorders + unknown callers).
+     *      Parse a +CC… or local Egyptian number out of the filename
+     *      and check the phone allowlist.
+     *
+     * If neither matches, we DROP. Better to miss a recording than to
+     * leak a personal call.
      */
     private fun shouldUpload(store: SessionStore, filename: String): Boolean {
         if (!store.recordingFilterEnabled) return true
-        val phone = extractPhone(filename) ?: run {
-            Log.i(TAG, "skipping (no phone in filename): $filename")
-            return false
+
+        // Path 1 — name match. Do this FIRST since the OS recorder
+        // produces these by default and they're cheap to check.
+        val optedNames = store.optedInRecordingNames()
+        if (optedNames.isNotEmpty()) {
+            val haystack = filename
+                .substringBeforeLast('.')              // strip extension
+                .replace(Regex("[_\\-]+"), " ")        // _ and - → space
+                .lowercase()
+                .replace(Regex("\\s+"), " ")
+                .trim()
+            for (name in optedNames) {
+                if (name.isNotEmpty() && haystack.contains(name)) {
+                    Log.i(TAG, "name-match: '$name' in '$filename'")
+                    return true
+                }
+            }
         }
-        val opted = store.optedInRecordingPhones()
-        if (phone in opted) return true
-        Log.i(TAG, "skipping (not opted in): $phone — $filename")
+
+        // Path 2 — phone match.
+        val phone = extractPhone(filename)
+        if (phone != null && phone in store.optedInRecordingPhones()) {
+            Log.i(TAG, "phone-match: $phone in '$filename'")
+            return true
+        }
+
+        Log.i(TAG, "skipping (no opted-in name or phone): $filename")
         return false
     }
 

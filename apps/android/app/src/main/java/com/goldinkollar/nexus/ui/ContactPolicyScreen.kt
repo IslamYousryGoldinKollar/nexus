@@ -66,7 +66,8 @@ fun ContactPolicyScreen(onBack: () -> Unit) {
     var hasPerm by remember { mutableStateOf(hasContactsPermission(context)) }
     var filterEnabled by remember { mutableStateOf(store.recordingFilterEnabled) }
     var contacts by remember { mutableStateOf<List<ContactEntry>>(emptyList()) }
-    val opted = remember { mutableStateListOf<String>().apply { addAll(store.optedInRecordingPhones()) } }
+    val optedPhones = remember { mutableStateListOf<String>().apply { addAll(store.optedInRecordingPhones()) } }
+    val optedNames = remember { mutableStateListOf<String>().apply { addAll(store.optedInRecordingNames()) } }
     var query by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
 
@@ -168,7 +169,7 @@ fun ContactPolicyScreen(onBack: () -> Unit) {
         Spacer(Modifier.height(8.dp))
 
         Text(
-            "${opted.size} of ${contacts.size} contacts opted in" +
+            "${optedNames.size} contacts opted in" +
                 if (loading) " · loading…" else "",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.outline,
@@ -182,18 +183,26 @@ fun ContactPolicyScreen(onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
             items(filtered, key = { it.phoneNumbersE164.firstOrNull() ?: it.displayName }) { c ->
+                val nameKey = store.normalizeName(c.displayName)
                 ContactRow(
                     entry = c,
-                    isAnyOpted = c.phoneNumbersE164.any { it in opted },
+                    // A contact is "on" if either its display name or
+                    // any of its phone numbers is in the allowlist —
+                    // covers users who flipped a number on manually
+                    // before this version added name-based matching.
+                    isAnyOpted = nameKey in optedNames ||
+                        c.phoneNumbersE164.any { it in optedPhones },
                     onToggle = { newOpt ->
-                        for (p in c.phoneNumbersE164) {
-                            if (newOpt) {
-                                if (p !in opted) opted += p
-                            } else {
-                                opted -= p
-                            }
-                        }
-                        store.setOptedInRecordingPhones(opted.toSet())
+                        val (names, phones) = store.setContactOptIn(
+                            displayName = c.displayName,
+                            phoneNumbersE164 = c.phoneNumbersE164,
+                            optedIn = newOpt,
+                        )
+                        // Sync the in-memory state lists so the UI re-
+                        // renders with the right toggle position
+                        // immediately, without waiting for a re-fetch.
+                        optedNames.clear(); optedNames.addAll(names)
+                        optedPhones.clear(); optedPhones.addAll(phones)
                     },
                 )
                 HorizontalDivider()
