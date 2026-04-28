@@ -20,7 +20,13 @@ if [ -z "$APK" ]; then
 fi
 
 echo "::group::Installing $APK"
-adb install -r "$APK"
+# Uninstall first to avoid INSTALL_FAILED_UPDATE_INCOMPATIBLE when the
+# AVD cache has a previous APK signed with a different debug keystore
+# (CI doesn't persist ~/.android/debug.keystore so each run gets a
+# fresh signature). `|| true` because uninstall fails harmlessly when
+# the package isn't installed.
+adb uninstall "$PKG" 2>/dev/null || true
+adb install "$APK"
 echo "::endgroup::"
 
 echo "::group::Clearing logcat"
