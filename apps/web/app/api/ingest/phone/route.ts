@@ -64,7 +64,9 @@ export async function POST(req: NextRequest) {
       const rebuilt = new Request(req.url, {
         method: 'POST',
         headers: req.headers,
-        body: raw,
+        // Cast: Buffer extends Uint8Array, but lib.dom Request#body
+        // wants BodyInit. Going through Uint8Array satisfies both.
+        body: new Uint8Array(raw),
       });
       form = await rebuilt.formData();
     } catch (err) {
