@@ -143,14 +143,28 @@ export async function transcribeWithWhisper(args: {
  */
 function sniffAudioExtension(bytes: Uint8Array): string | null {
   if (bytes.length < 12) return null;
-  // ISO BMFF (M4A / MP4 / 3GP): "ftyp" at bytes 4..8
+  // ISO BMFF (M4A / MP4 / 3GP): "ftyp" at bytes 4..8 followed by a
+  // 4-byte major brand at bytes 8..12. Whisper's M4A decoder is
+  // strict about the brand — it accepts "M4A " / "M4B " / "mp42" /
+  // "isom" but rejects "3gp4" / "3gp5" / "3g2a" with "Invalid file
+  // format" even though those still wrap AAC audio. The MP4 decoder
+  // is more permissive, so route 3GP brands through `.mp4`.
   if (
     bytes[4] === 0x66 && // f
     bytes[5] === 0x74 && // t
     bytes[6] === 0x79 && // y
     bytes[7] === 0x70    // p
   ) {
-    return 'm4a';
+    const brand = String.fromCharCode(
+      bytes[8] ?? 0,
+      bytes[9] ?? 0,
+      bytes[10] ?? 0,
+      bytes[11] ?? 0,
+    );
+    if (brand === 'M4A ' || brand === 'M4B ' || brand === 'M4P ') return 'm4a';
+    // Everything else with ftyp (mp4, isom, 3gp4, 3gp5, 3g2a, qt …)
+    // → `.mp4` extension. Whisper's mp4 decoder handles them all.
+    return 'mp4';
   }
   // OggS
   if (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
