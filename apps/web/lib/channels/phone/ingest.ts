@@ -1,7 +1,14 @@
 import { createHash } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { InteractionIngestedEvent } from '@nexus/shared';
-import { insertAttachment, upsertInteraction } from '@nexus/db';
+import {
+  contacts,
+  eq,
+  insertAttachment,
+  interactions as interactionsTable,
+  sessions as sessionsTable,
+  upsertInteraction,
+} from '@nexus/db';
 import { inngest } from '@nexus/inngest-fns';
 import { getDb } from '../../db';
 import { log } from '../../logger';
@@ -81,6 +88,18 @@ export async function ingestPhoneCall(args: {
     checksum: checksumHex,
   });
 
+  // Process-pending only attaches an interaction to a session when
+  // extractIdentifier returns a phone/email/handle. For phone calls
+  // where the filename carries a contact name (Android-14+ native
+  // recorder default) the meta.counterparty is null, the extractor
+  // returns null, and the interaction sits orphaned forever. Mirror
+  // the meeting-ingest pattern: pin every new phone interaction to a
+  // synthetic "Phone Calls" contact in its own fresh session so the
+  // transcription + reasoning crons see it.
+  if (inserted) {
+    await attachPhoneCallToSession(db, interaction.id, occurredAt);
+  }
+
   if (inserted) {
     const event: InteractionIngestedEvent = {
       name: 'nexus/interaction.ingested',
@@ -110,6 +129,56 @@ export async function ingestPhoneCall(args: {
     checksumHex,
     alreadyExisted: uploaded.alreadyExisted,
   };
+}
+
+/**
+ * Resolve (or lazily create) the catch-all "Phone Calls" contact and
+ * open a fresh session for this recording. Backdate lastActivityAt by
+ * 10 min so the next auto-reason tick (default 3 min cooldown) picks
+ * the session up immediately. Same pattern as the meeting endpoint —
+ * each call is its own conversation.
+ */
+async function attachPhoneCallToSession(
+  db: ReturnType<typeof getDb>,
+  interactionId: string,
+  occurredAt: Date,
+): Promise<void> {
+  const PHONE_NAME = 'Phone Calls';
+
+  let [row] = await db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(eq(contacts.displayName, PHONE_NAME))
+    .limit(1);
+
+  if (!row) {
+    const created = await db
+      .insert(contacts)
+      .values({
+        displayName: PHONE_NAME,
+        notes: 'Auto-created bucket for phone-call recordings ingested from the Android app.',
+      })
+      .returning({ id: contacts.id });
+    row = created[0];
+    if (!row) throw new Error('failed to create Phone Calls contact');
+  }
+
+  const backdated = new Date(occurredAt.getTime() - 10 * 60 * 1000);
+  const [session] = await db
+    .insert(sessionsTable)
+    .values({
+      contactId: row.id,
+      state: 'open',
+      openedAt: occurredAt,
+      lastActivityAt: backdated,
+    })
+    .returning({ id: sessionsTable.id });
+  if (!session) throw new Error('failed to open phone session');
+
+  await db
+    .update(interactionsTable)
+    .set({ sessionId: session.id })
+    .where(eq(interactionsTable.id, interactionId));
 }
 
 function buildStorageKey(
