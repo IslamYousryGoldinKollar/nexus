@@ -17,6 +17,7 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentDisposition
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -228,10 +229,25 @@ class UploadRecordingWorker(
                     ),
                 )
             }
+            // The server always returns 200 — even on validation failure
+            // it sends `{ "ok": true, "ignored": "<reason>" }` so the
+            // WorkManager queue doesn't retry-storm on a poison file.
+            // That "smart" choice meant the previous version of this
+            // worker treated parse failures as successes, marked the
+            // file as seen, and never retried after the bug was fixed
+            // server-side. Read the JSON body and only call onSuccess
+            // when there's no `ignored` field.
             when {
                 resp.status.value in 200..299 -> {
-                    onSuccess()
-                    Result.success()
+                    val body = runCatching { resp.bodyAsText() }.getOrDefault("")
+                    val ignored = Regex("\"ignored\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
+                    if (ignored != null) {
+                        Log.w(TAG, "server ignored upload: $ignored — will retry later")
+                        Result.retry()
+                    } else {
+                        onSuccess()
+                        Result.success()
+                    }
                 }
                 resp.status.value >= 500 || resp.status == HttpStatusCode.RequestTimeout -> Result.retry()
                 else -> Result.failure()

@@ -100,6 +100,19 @@ class SessionStore private constructor(context: Context) {
     }
 
     /**
+     * Wipe the seen-set so the next polling tick re-evaluates every
+     * file in the picked folder. Useful after a fix lands on either
+     * the server (which used to return 200+ignored on multipart parse
+     * failures, marking files as "seen" without actually uploading
+     * them) or the client filter logic.
+     */
+    fun clearSeenRecordings(): Int {
+        val n = seenRecordingDocumentIds().size
+        prefs.edit().remove(KEY_SEEN_RECORDING_IDS).apply()
+        return n
+    }
+
+    /**
      * Set of E.164-normalised phone numbers whose call recordings the
      * user has explicitly opted in to upload. The recording filename
      * usually carries the counterparty number (e.g.

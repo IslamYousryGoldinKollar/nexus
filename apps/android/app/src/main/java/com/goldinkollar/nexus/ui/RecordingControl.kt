@@ -181,6 +181,22 @@ fun RecordingControl(onContactPolicyClick: () -> Unit = {}) {
                 }
             }
 
+            if (folderUri != null) {
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = {
+                    val cleared = store.clearSeenRecordings()
+                    android.widget.Toast.makeText(
+                        context,
+                        if (cleared > 0)
+                            "Will re-process $cleared previously-seen recording${if (cleared == 1) "" else "s"} on the next tick"
+                        else "No prior recordings tracked yet",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }) {
+                    Text("Re-process all recordings in folder")
+                }
+            }
+
             if (folderUri == null) {
                 Spacer(Modifier.height(8.dp))
                 Text(
