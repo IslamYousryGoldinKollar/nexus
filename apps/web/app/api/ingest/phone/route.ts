@@ -58,8 +58,9 @@ export async function POST(req: NextRequest) {
     // here is what unblocks Android phone uploads (commit 7843e48
     // tracked the issue).
     let form: FormData;
+    let raw: Buffer | null = null;
     try {
-      const raw = Buffer.from(await req.arrayBuffer());
+      raw = Buffer.from(await req.arrayBuffer());
       const rebuilt = new Request(req.url, {
         method: 'POST',
         headers: req.headers,
@@ -67,7 +68,25 @@ export async function POST(req: NextRequest) {
       });
       form = await rebuilt.formData();
     } catch (err) {
-      log.warn('phone.body.invalid_multipart', { err: (err as Error).message });
+      // Diagnostic dump — Android Ktor's MultiPartFormDataContent has
+      // shipped malformed bodies before. We log the Content-Type so we
+      // can see whether the boundary parameter is present, the total
+      // size, and the first / last 200 bytes of the body so a glance
+      // tells us if the multipart preamble + closing delimiter look
+      // sane. Tracking body[0..199] lets us catch "missing
+      // --<boundary>" prefixes.
+      const ct = req.headers.get('content-type') ?? '(missing)';
+      const cl = req.headers.get('content-length') ?? '(missing)';
+      const head = raw ? raw.subarray(0, 200).toString('utf-8') : '(no body)';
+      const tail = raw && raw.length > 200 ? raw.subarray(raw.length - 200).toString('utf-8') : '';
+      log.warn('phone.body.invalid_multipart', {
+        err: (err as Error).message,
+        contentType: ct,
+        contentLength: cl,
+        bytes: raw?.length ?? 0,
+        bodyHead: head,
+        bodyTail: tail,
+      });
       return NextResponse.json({ ok: true, ignored: 'invalid_multipart' });
     }
 
