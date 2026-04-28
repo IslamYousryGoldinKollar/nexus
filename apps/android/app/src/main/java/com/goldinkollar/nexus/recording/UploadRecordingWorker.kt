@@ -219,7 +219,11 @@ class UploadRecordingWorker(
                                     ),
                                 ),
                             )
-                            append("metadata", buildMetadata(filename, occurredEpochMs))
+                            // Field name MUST be 'meta' — the server route handler
+                            // (apps/web/app/api/ingest/phone/route.ts) does
+                            // `form.get('meta')`. Earlier Phase 1 code shipped
+                            // with 'metadata' which silently dropped every upload.
+                            append("meta", buildMetadata(filename, occurredEpochMs))
                         },
                     ),
                 )

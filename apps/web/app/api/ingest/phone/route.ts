@@ -49,9 +49,23 @@ export async function POST(req: NextRequest) {
       return new NextResponse('Unauthorized', { status: 401 });
     }
 
+    // Read the raw bytes first then construct a fresh Request to call
+    // formData() on. Calling `req.formData()` directly on the
+    // incoming NextRequest fails intermittently on Vercel's Node
+    // runtime ("Failed to parse body as FormData") when the multipart
+    // body is large or has been touched by an upstream proxy. The
+    // meeting endpoint already uses this workaround; mirroring it
+    // here is what unblocks Android phone uploads (commit 7843e48
+    // tracked the issue).
     let form: FormData;
     try {
-      form = await req.formData();
+      const raw = Buffer.from(await req.arrayBuffer());
+      const rebuilt = new Request(req.url, {
+        method: 'POST',
+        headers: req.headers,
+        body: raw,
+      });
+      form = await rebuilt.formData();
     } catch (err) {
       log.warn('phone.body.invalid_multipart', { err: (err as Error).message });
       return NextResponse.json({ ok: true, ignored: 'invalid_multipart' });
