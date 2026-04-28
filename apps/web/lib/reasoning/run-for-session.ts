@@ -71,6 +71,36 @@ export async function runReasoningForSession(
       return { status: 'empty' };
     }
 
+    // Privacy gate: contact's allow_action toggle. Mirrors the gate in
+    // the deprecated Inngest reason-session function — was missing
+    // from the active cron path, which is why disabling a contact in
+    // the UI didn't actually stop their messages from being reasoned
+    // over. We close the session immediately rather than skipping
+    // silently so it doesn't keep getting picked up by the cron's
+    // stuck-reasoning sweep.
+    if (ctx.contact?.id) {
+      const [row] = await db
+        .select({
+          allowAction: contacts.allowAction,
+          displayName: contacts.displayName,
+        })
+        .from(contacts)
+        .where(eq(contacts.id, ctx.contact.id))
+        .limit(1);
+      if (row && !row.allowAction) {
+        await db
+          .update(sessionsTable)
+          .set({ state: 'closed', closedAt: new Date(), updatedAt: sql`now()` })
+          .where(eq(sessionsTable.id, sessionId));
+        log.info('reasoning.contact_blocked', {
+          sessionId,
+          contactId: ctx.contact.id,
+          contactName: row.displayName,
+        });
+        return { status: 'empty' };
+      }
+    }
+
     const toIso = (v: Date | string): string =>
       typeof v === 'string' ? v : v.toISOString();
 

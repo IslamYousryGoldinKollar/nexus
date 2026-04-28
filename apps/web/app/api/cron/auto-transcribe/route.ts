@@ -62,6 +62,13 @@ export async function GET(req: NextRequest) {
     // because the leftJoin returned the same attachment row multiple
     // times when callers retried — guard with a `DISTINCT ON` here so
     // the per-tick batch is unique.
+    //
+    // Privacy gate: skip attachments belonging to contacts whose
+    // `allow_transcription` flag is false. Done at the SQL level so we
+    // don't waste an OpenAI API call (and the resulting cost) on
+    // recordings the user explicitly opted out of. Interactions with
+    // no session, or sessions with no contact, fall through (treated
+    // as allowed — we can't block what we can't attribute).
     const untranscribed = await db.execute(sql`
       SELECT DISTINCT ON (a.id)
         a.id          as "attachmentId",
@@ -70,8 +77,12 @@ export async function GET(req: NextRequest) {
         a.interaction_id as "interactionId"
       FROM attachments a
       LEFT JOIN transcripts t ON t.attachment_id = a.id
+      LEFT JOIN interactions i ON i.id = a.interaction_id
+      LEFT JOIN sessions s ON s.id = i.session_id
+      LEFT JOIN contacts c ON c.id = s.contact_id
       WHERE t.id IS NULL
         AND (a.mime_type LIKE 'audio%' OR a.mime_type LIKE 'video%')
+        AND (c.id IS NULL OR c.allow_transcription = true)
       ORDER BY a.id
       LIMIT 5
     `);
