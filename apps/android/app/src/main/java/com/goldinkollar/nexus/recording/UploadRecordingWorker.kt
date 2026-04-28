@@ -1,6 +1,7 @@
 package com.goldinkollar.nexus.recording
 
 import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.util.Log
@@ -8,41 +9,42 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.goldinkollar.nexus.data.ContactsRepository
 import com.goldinkollar.nexus.data.SessionStore
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.request.forms.MultiPartFormDataContent
-import io.ktor.client.request.forms.formData
-import io.ktor.client.request.header
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.HttpResponse
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
-import io.ktor.http.Headers
-import io.ktor.http.HttpHeaders
-import io.ktor.http.HttpStatusCode
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.io.InputStream
+import java.util.concurrent.TimeUnit
 
 /**
  * WorkManager job that uploads one recording to /api/ingest/phone.
  *
- * Two input modes (use exactly one):
- *   - KEY_DOC_URI + KEY_TREE_URI: SAF-picked file (preferred path).
- *     Bytes read via ContentResolver; metadata pulled from the
- *     DocumentsContract row.
- *   - KEY_FILE_PATH: legacy raw filesystem path. Kept for the old
- *     FileObserver flow on devices where the user pinned a public
- *     folder before SAF migration.
+ * Two input modes:
+ *   - KEY_DOC_URI: SAF-picked file (preferred path, used by the
+ *     polling observer). Bytes via ContentResolver, metadata via
+ *     DocumentsContract.
+ *   - KEY_FILE_PATH: legacy raw filesystem path.
  *
- * Backoff: WorkManager applies exponential backoff (default
- * 30s/1m/2m/...) on Result.retry(). We retry on network errors and
- * 5xx; permanent failures (4xx) → Result.failure() so the queue clears.
+ * Multipart is built with OkHttp directly — Ktor's
+ * MultiPartFormDataContent emitted a malformed Content-Disposition
+ * that Vercel's WHATWG-fetch FormData parser rejected (diagnostic in
+ * commit 4ce36db). OkHttp's MultipartBody is bulletproof and already
+ * in the dependency graph via ktor-client-okhttp.
  *
- * Idempotency on success: the document id is added to
- * [SessionStore.markRecordingSeen] so the polling observer skips it
- * forever after, even across service restarts.
+ * Privacy gate: shouldUpload(filename) checks the recording filename
+ * against the user's opt-in lists (display name OR phone number)
+ * BEFORE bytes leave the device. Default-deny: a fresh install with
+ * no opted-in contacts uploads nothing.
+ *
+ * Backoff: WorkManager handles exponential retry on Result.retry().
+ * The server returns 200 even on validation failures (with
+ * `{ ignored: ... }` in the body); the worker parses that and
+ * returns retry rather than marking the file as seen — that way a
+ * server-side fix automatically picks up files that previously
+ * failed.
  */
 class UploadRecordingWorker(
     appContext: Context,
@@ -64,33 +66,19 @@ class UploadRecordingWorker(
 
     /**
      * Privacy gate. Returns true when the recording's counterparty is
-     * one the user has explicitly opted in to upload. Returns true
-     * unconditionally when the master filter is OFF.
-     *
-     * Two recognition paths:
-     *
-     *   1. Contact NAME (Android 14+ native recorder writes
-     *      "<Display Name>_YYMMDD_HHMMSS.m4a"). We lowercase the
-     *      filename and check whether any opted-in normalised name
-     *      appears as a substring.
-     *
-     *   2. Phone NUMBER (third-party recorders + unknown callers).
-     *      Parse a +CC… or local Egyptian number out of the filename
-     *      and check the phone allowlist.
-     *
-     * If neither matches, we DROP. Better to miss a recording than to
-     * leak a personal call.
+     * one the user has explicitly opted in to upload. Two recognition
+     * paths: contact display name (Android-14+ native recorder writes
+     * "<Name>_YYMMDD_HHMMSS.m4a") and phone number (third-party
+     * recorders + unknown callers).
      */
     private fun shouldUpload(store: SessionStore, filename: String): Boolean {
         if (!store.recordingFilterEnabled) return true
 
-        // Path 1 — name match. Do this FIRST since the OS recorder
-        // produces these by default and they're cheap to check.
         val optedNames = store.optedInRecordingNames()
         if (optedNames.isNotEmpty()) {
             val haystack = filename
-                .substringBeforeLast('.')              // strip extension
-                .replace(Regex("[_\\-]+"), " ")        // _ and - → space
+                .substringBeforeLast('.')
+                .replace(Regex("[_\\-]+"), " ")
                 .lowercase()
                 .replace(Regex("\\s+"), " ")
                 .trim()
@@ -102,7 +90,6 @@ class UploadRecordingWorker(
             }
         }
 
-        // Path 2 — phone match.
         val phone = extractPhone(filename)
         if (phone != null && phone in store.optedInRecordingPhones()) {
             Log.i(TAG, "phone-match: $phone in '$filename'")
@@ -114,17 +101,45 @@ class UploadRecordingWorker(
     }
 
     private fun extractPhone(filename: String): String? {
-        // Common patterns we've seen across recorder apps:
-        //   +201234567890_2026-04-28.m4a            ← +CC inline
-        //   Call_+201234567890_outgoing.m4a         ← +CC with prefix
-        //   201234567890_2026-04-28.m4a             ← bare CC
-        //   01234567890_2026-04-28.m4a              ← Egypt local
-        //
-        // Try +CC first (most reliable), then fall back to local.
         val plus = Regex("\\+\\d{8,15}").find(filename)?.value
         if (plus != null) return plus
         val bare = Regex("\\b\\d{8,15}\\b").find(filename)?.value ?: return null
         return ContactsRepository.normalizeE164(bare)
+    }
+
+    /**
+     * Heuristically classify a recording as inbound/outbound by looking
+     * for keyword markers many recorder apps embed in the filename.
+     * Returns "inbound" or "outbound" when confident, else null —
+     * the server schema treats null/missing as "internal" (the DB
+     * direction enum's catch-all value).
+     */
+    private fun extractDirection(filename: String): String? {
+        val lower = filename.lowercase()
+        // Prioritise unambiguous markers.
+        if (Regex("\\b(in|incoming|received|recv)\\b").containsMatchIn(lower)) return "inbound"
+        if (Regex("\\b(out|outgoing|outbound|sent)\\b").containsMatchIn(lower)) return "outbound"
+        return null
+    }
+
+    /**
+     * Best-effort audio duration in seconds via MediaMetadataRetriever.
+     * Returns 0 on any failure — the server defaults to 0 and the
+     * reasoner doesn't depend on this field.
+     */
+    private fun extractDurationSec(uriOrPath: Any): Int {
+        return try {
+            val r = MediaMetadataRetriever()
+            when (uriOrPath) {
+                is Uri -> r.setDataSource(applicationContext, uriOrPath)
+                is File -> r.setDataSource(uriOrPath.absolutePath)
+            }
+            val ms = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            r.release()
+            (ms / 1000).toInt().coerceAtLeast(0)
+        } catch (_: Throwable) {
+            0
+        }
     }
 
     private suspend fun uploadFromContentUri(
@@ -139,9 +154,6 @@ class UploadRecordingWorker(
         }
         if (meta.size < 1024L) return Result.failure()
 
-        // Privacy filter: skip recordings from contacts not on the
-        // opt-in list. We mark the document as 'seen' so the polling
-        // observer doesn't re-evaluate it on every tick.
         if (!shouldUpload(store, meta.displayName)) {
             store.markRecordingSeen(meta.documentId)
             return Result.success()
@@ -154,6 +166,8 @@ class UploadRecordingWorker(
             null
         } ?: return Result.retry()
 
+        val durationSec = extractDurationSec(docUri)
+
         return doUpload(
             store = store,
             apiKey = apiKey,
@@ -161,6 +175,7 @@ class UploadRecordingWorker(
             filename = meta.displayName,
             mime = meta.mimeType,
             occurredEpochMs = meta.lastModified,
+            durationSec = durationSec,
             onSuccess = { store.markRecordingSeen(meta.documentId) },
         )
     }
@@ -172,6 +187,7 @@ class UploadRecordingWorker(
     ): Result {
         if (!file.exists() || file.length() == 0L) return Result.failure()
         if (!shouldUpload(store, file.name)) return Result.success()
+        val durationSec = extractDurationSec(file)
         return doUpload(
             store = store,
             apiKey = apiKey,
@@ -179,96 +195,84 @@ class UploadRecordingWorker(
             filename = file.name,
             mime = file.guessMime(),
             occurredEpochMs = file.lastModified(),
-            onSuccess = { /* no idempotency tag — legacy path */ },
+            durationSec = durationSec,
+            onSuccess = { /* legacy path — no idempotency tag */ },
         )
     }
 
-    private suspend fun doUpload(
+    /**
+     * Perform the actual HTTP upload using OkHttp's MultipartBody —
+     * which produces a Content-Disposition like
+     * `form-data; name="audio"; filename="..."` exactly as
+     * Vercel's FormData parser expects.
+     *
+     * Field names match the server schema in
+     * apps/web/lib/channels/phone/schema.ts:
+     *   - `audio` (file part)
+     *   - `meta` (JSON string with callId + startedAt + optional
+     *     counterparty / direction / durationSec / recorder)
+     */
+    private fun doUpload(
         store: SessionStore,
         apiKey: String,
         audioBytes: ByteArray,
         filename: String,
-        mime: ContentType,
+        mime: String,
         occurredEpochMs: Long,
+        durationSec: Int,
         onSuccess: () -> Unit,
     ): Result {
-        val client = HttpClient(OkHttp) {
-            install(HttpTimeout) {
-                requestTimeoutMillis = 120_000
-                connectTimeoutMillis = 10_000
-            }
-        }
+        val mediaType = mime.toMediaTypeOrNull() ?: "application/octet-stream".toMediaType()
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart(
+                "audio",
+                sanitizeFilename(filename),
+                audioBytes.toRequestBody(mediaType),
+            )
+            .addFormDataPart("meta", buildMetadata(filename, occurredEpochMs, durationSec))
+            .build()
+
+        val url = store.baseUrl.trimEnd('/') + "/api/ingest/phone"
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $apiKey")
+            .header("User-Agent", "nexus-android/0.3")
+            .post(body)
+            .build()
+
         return runCatching {
-            val resp: HttpResponse = client.post(
-                store.baseUrl.trimEnd('/') + "/api/ingest/phone",
-            ) {
-                header(HttpHeaders.Authorization, "Bearer $apiKey")
-                setBody(
-                    MultiPartFormDataContent(
-                        formData {
-                            // Ktor auto-emits `Content-Disposition: form-data;
-                            // name="audio"` when we append a part — DO NOT pass
-                            // a Content-Disposition header on top of that. We
-                            // tried `ContentDisposition.File.withParameter("name",
-                            // ...)` earlier; Ktor concatenated it with its own
-                            // disposition and produced the malformed
-                            // "form-data; name=audio; file; name=audio;
-                            // filename=..." that WHATWG-fetch FormData rejects
-                            // (Vercel diag dump in commit 4ce36db caught it).
-                            //
-                            // To attach a filename, append a SECOND
-                            // Content-Disposition VALUE — not header — using
-                            // Ktor's `Headers.build` with a single
-                            // `filename="..."` parameter. Ktor's serializer
-                            // merges this into the auto-generated disposition,
-                            // producing the canonical
-                            // `form-data; name="audio"; filename="..."`.
-                            val partHeaders = Headers.build {
-                                append(HttpHeaders.ContentType, mime.toString())
-                                append(
-                                    HttpHeaders.ContentDisposition,
-                                    "filename=\"${sanitizeFilename(filename)}\"",
-                                )
-                            }
-                            append(
-                                key = "audio",
-                                value = audioBytes,
-                                headers = partHeaders,
-                            )
-                            // Field name MUST be 'meta' — the server route handler
-                            // (apps/web/app/api/ingest/phone/route.ts) does
-                            // `form.get('meta')`. Earlier Phase 1 code shipped
-                            // with 'metadata' which silently dropped every upload.
-                            append("meta", buildMetadata(filename, occurredEpochMs))
-                        },
-                    ),
-                )
-            }
-            // The server always returns 200 — even on validation failure
-            // it sends `{ "ok": true, "ignored": "<reason>" }` so the
-            // WorkManager queue doesn't retry-storm on a poison file.
-            // That "smart" choice meant the previous version of this
-            // worker treated parse failures as successes, marked the
-            // file as seen, and never retried after the bug was fixed
-            // server-side. Read the JSON body and only call onSuccess
-            // when there's no `ignored` field.
-            when {
-                resp.status.value in 200..299 -> {
-                    val body = runCatching { resp.bodyAsText() }.getOrDefault("")
-                    val ignored = Regex("\"ignored\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
-                    if (ignored != null) {
-                        Log.w(TAG, "server ignored upload: $ignored — will retry later")
-                        Result.retry()
-                    } else {
-                        onSuccess()
-                        Result.success()
+            uploadClient.newCall(request).execute().use { resp ->
+                val code = resp.code
+                val respBody = resp.body?.string() ?: ""
+                when {
+                    code in 200..299 -> {
+                        // Server returns 200 even on validation failure,
+                        // with `{ ignored: <reason> }` in the body.
+                        // Don't mark as seen if the server ignored —
+                        // let the next polling tick (or backoff retry)
+                        // try again so a server-side fix automatically
+                        // picks up the file.
+                        val ignored = Regex("\"ignored\"\\s*:\\s*\"([^\"]+)\"")
+                            .find(respBody)?.groupValues?.get(1)
+                        if (ignored != null) {
+                            Log.w(TAG, "server ignored upload ($ignored): $filename")
+                            Result.retry()
+                        } else {
+                            Log.i(TAG, "uploaded: $filename (${audioBytes.size} bytes, ${durationSec}s)")
+                            onSuccess()
+                            Result.success()
+                        }
+                    }
+                    code in 500..599 || code == 408 -> Result.retry()
+                    else -> {
+                        Log.w(TAG, "upload failed $code: $respBody")
+                        Result.failure()
                     }
                 }
-                resp.status.value >= 500 || resp.status == HttpStatusCode.RequestTimeout -> Result.retry()
-                else -> Result.failure()
             }
         }.getOrElse {
-            Log.w(TAG, "upload failed; will retry", it)
+            Log.w(TAG, "upload exception (will retry): $filename", it)
             Result.retry()
         }
     }
@@ -276,7 +280,7 @@ class UploadRecordingWorker(
     private data class DocMeta(
         val documentId: String,
         val displayName: String,
-        val mimeType: ContentType,
+        val mimeType: String,
         val size: Long,
         val lastModified: Long,
     )
@@ -307,37 +311,31 @@ class UploadRecordingWorker(
         }
     }
 
-    private fun mimeFromString(declared: String?, filename: String): ContentType {
-        if (declared != null && declared != "application/octet-stream") {
-            return runCatching { ContentType.parse(declared) }.getOrNull()
-                ?: extensionMime(filename)
-        }
+    private fun mimeFromString(declared: String?, filename: String): String {
+        if (declared != null && declared != "application/octet-stream") return declared
         return extensionMime(filename)
     }
 
-    private fun extensionMime(filename: String): ContentType =
+    private fun extensionMime(filename: String): String =
         when (filename.substringAfterLast('.', "").lowercase()) {
-            "m4a", "mp4" -> ContentType.parse("audio/mp4")
-            "mp3" -> ContentType.parse("audio/mpeg")
-            "wav" -> ContentType.parse("audio/wav")
-            "ogg", "opus" -> ContentType.parse("audio/ogg")
-            "amr" -> ContentType.parse("audio/amr")
-            "aac" -> ContentType.parse("audio/aac")
-            "3gp" -> ContentType.parse("audio/3gpp")
-            "flac" -> ContentType.parse("audio/flac")
-            else -> ContentType.parse("application/octet-stream")
+            "m4a", "mp4" -> "audio/mp4"
+            "mp3" -> "audio/mpeg"
+            "wav" -> "audio/wav"
+            "ogg", "opus" -> "audio/ogg"
+            "amr" -> "audio/amr"
+            "aac" -> "audio/aac"
+            "3gp" -> "audio/3gpp"
+            "flac" -> "audio/flac"
+            else -> "application/octet-stream"
         }
 
-    private fun File.guessMime(): ContentType = extensionMime(name)
+    private fun File.guessMime(): String = extensionMime(name)
 
     /**
-     * Strip characters that break a `filename="..."` parameter in
-     * Content-Disposition: literal double-quotes (would close the
-     * quoted-string early), CR/LF (would split the header), and any
-     * non-ASCII (the Android native recorder happily includes 🥰
-     * emoji in filenames, which Ktor's serializer doesn't UTF-8
-     * encode). The original filename is still in the metadata JSON
-     * payload so we don't lose it.
+     * Strip characters that break a `filename="..."` parameter:
+     * literal double-quotes, CR/LF, backslash, and non-ASCII (the
+     * Android native recorder includes 🥰 emoji in filenames).
+     * The original filename is preserved in the metadata JSON.
      */
     private fun sanitizeFilename(name: String): String =
         name
@@ -345,32 +343,31 @@ class UploadRecordingWorker(
             .replace(Regex("[^\\x20-\\x7E]"), "_")
             .ifEmpty { "recording" }
 
-    private fun buildMetadata(filename: String, occurredMs: Long): String {
-        // Most recorder apps embed the counterparty number in the
-        // filename ("+201234567890_call_2026-04-26.m4a"). Fall back to
-        // null when no number is present — server validation requires
-        // counterparty + direction + occurredAt + durationSec + callId,
-        // so we generate a deterministic callId from the filename so
-        // re-uploads dedupe server-side via UNIQUE(channel, source_message_id).
-        val counterparty = Regex("\\+?\\d{7,15}").find(filename)?.value?.let {
-            if (it.startsWith("+")) it else "+$it"
-        }
+    /**
+     * Construct the JSON value of the `meta` form field. Aligned with
+     * apps/web/lib/channels/phone/schema.ts:phoneUploadMetaSchema —
+     * `callId` and `startedAt` are required, the rest are optional and
+     * the server defaults them when null.
+     */
+    private fun buildMetadata(filename: String, occurredMs: Long, durationSec: Int): String {
+        val counterparty = extractPhone(filename)
+        val direction = extractDirection(filename)
         val callId = java.util.UUID.nameUUIDFromBytes(
             filename.toByteArray(Charsets.UTF_8),
         ).toString()
-        val occurredIso = java.time.Instant.ofEpochMilli(occurredMs).toString()
+        val startedAtIso = java.time.Instant.ofEpochMilli(occurredMs).toString()
+
         return buildString {
             append('{')
-            append("\"counterparty\":")
-            append(counterparty?.let { "\"$it\"" } ?: "null")
-            append(",\"direction\":\"unknown\"")
-            append(",\"occurredAt\":\"")
-            append(occurredIso)
-            append('"')
-            append(",\"durationSec\":0")
-            append(",\"callId\":\"")
-            append(callId)
-            append('"')
+            append("\"callId\":\"").append(callId).append('"')
+            append(",\"startedAt\":\"").append(startedAtIso).append('"')
+            append(",\"durationSec\":").append(durationSec)
+            if (counterparty != null) {
+                append(",\"counterparty\":\"").append(counterparty).append('"')
+            }
+            if (direction != null) {
+                append(",\"direction\":\"").append(direction).append('"')
+            }
             append(",\"recorder\":\"saf-picker\"")
             append('}')
         }
@@ -381,5 +378,17 @@ class UploadRecordingWorker(
         const val KEY_FILE_PATH = "file_path"
         const val KEY_DOC_URI = "doc_uri"
         const val KEY_TREE_URI = "tree_uri"
+
+        /**
+         * One client per process. OkHttp keeps a connection pool so
+         * subsequent uploads reuse the same TLS session — saving
+         * ~200ms per call. Long timeouts because the audio body is
+         * uploaded in one POST.
+         */
+        private val uploadClient = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(180, TimeUnit.SECONDS)
+            .writeTimeout(180, TimeUnit.SECONDS)
+            .build()
     }
 }

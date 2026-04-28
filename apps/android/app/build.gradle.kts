@@ -15,8 +15,8 @@ android {
         applicationId = "com.goldinkollar.nexus"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.3.4"
+        versionCode = 8
+        versionName = "0.4.0"
     }
 
     buildTypes {
@@ -84,6 +84,12 @@ dependencies {
     // Networking — Ktor (lighter than Retrofit and uses kotlinx.serialization native)
     implementation("io.ktor:ktor-client-core:3.0.1")
     implementation("io.ktor:ktor-client-okhttp:3.0.1")
+    // OkHttp for the multipart phone-call upload — Ktor's
+    // MultiPartFormDataContent shipped a malformed Content-Disposition
+    // (commit 256ba1e diagnostic) so we use OkHttp's MultipartBody
+    // directly. Already on the classpath transitively via
+    // ktor-client-okhttp; this line just makes it explicit.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.ktor:ktor-client-content-negotiation:3.0.1")
     implementation("io.ktor:ktor-client-logging:3.0.1")
     implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.1")
