@@ -117,6 +117,59 @@ export interface ReasonContext {
 
 // ---- Output schema ------------------------------------------------------
 
+/**
+ * Forgiving date parser for proposedTask.startDateGuess / dueDateGuess.
+ *
+ * The model is prompted to return ISO 8601 but in practice returns a
+ * mix of formats — `2026-04-28`, `2026-04-28T09:00`, occasionally even
+ * `"first thing in the morning"`. Rejecting the entire response on a
+ * malformed date used to drop perfectly good tasks on the floor.
+ *
+ * This preprocessor accepts:
+ *   - empty / null / undefined           → null
+ *   - already-valid ISO datetime         → pass through
+ *   - `YYYY-MM-DD`                       → start of day UTC
+ *   - `YYYY-MM-DDTHH:MM` (no seconds/Z)  → assume :00Z
+ *   - `YYYY-MM-DDTHH:MM:SS` (no Z)       → assume Z
+ *   - anything else                      → null (downstream = "no guess")
+ *
+ * Output is always either a valid RFC3339 datetime string or null.
+ */
+const dateGuessSchema = z
+  .preprocess((v) => {
+    if (v == null || v === '') return null;
+    if (typeof v !== 'string') return null;
+    const s = v.trim();
+    if (!s) return null;
+    // Already a valid ISO datetime? Date.parse handles it; round-trip
+    // through Date to canonicalise (drops fractional seconds, etc.).
+    const direct = Date.parse(s);
+    if (!Number.isNaN(direct)) {
+      // Be strict-ish: only accept if the string at least starts with a
+      // 4-digit year to avoid `Date.parse('first')` style coincidences.
+      if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+        return new Date(direct).toISOString();
+      }
+    }
+    // Date-only: YYYY-MM-DD → start of day UTC.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      const t = Date.parse(s + 'T00:00:00Z');
+      return Number.isNaN(t) ? null : new Date(t).toISOString();
+    }
+    // Date + HH:MM (no seconds, no zone) → assume Z.
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) {
+      const t = Date.parse(s + ':00Z');
+      return Number.isNaN(t) ? null : new Date(t).toISOString();
+    }
+    // Date + HH:MM:SS (no zone) → assume Z.
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(s)) {
+      const t = Date.parse(s + 'Z');
+      return Number.isNaN(t) ? null : new Date(t).toISOString();
+    }
+    return null;
+  }, z.string().datetime().nullable())
+  .optional();
+
 export const proposedTaskSchema = z.object({
   title: z.string().min(1).max(200),
   description: z.string().min(1).max(4000),
@@ -131,8 +184,16 @@ export const proposedTaskSchema = z.object({
     }, z.enum(['low', 'med', 'high', 'urgent']))
     .default('med'),
   assigneeGuess: z.string().nullable().optional(),
-  startDateGuess: z.string().datetime().nullable().optional(),
-  dueDateGuess: z.string().datetime().nullable().optional(),
+  // Date guesses: prompt asks for ISO 8601, but the model regularly
+  // returns date-only (`2026-04-28`) or natural language ("first
+  // thing in the morning") and rejecting the whole response on a
+  // bad date drops a real task on the floor. Coerce permissively:
+  //   - valid ISO datetime → pass through
+  //   - YYYY-MM-DD          → 00:00:00Z that day
+  //   - YYYY-MM-DDTHH:MM    → assume seconds=00, append Z
+  //   - everything else     → null (downstream treats as "no guess")
+  startDateGuess: dateGuessSchema,
+  dueDateGuess: dateGuessSchema,
   /**
    * Set ONLY when the AI has determined this proposal updates an
    * existing Injaz task (the id must come from the existingInjazTasks
