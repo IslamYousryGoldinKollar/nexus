@@ -2,8 +2,11 @@ import { createHash } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { InteractionIngestedEvent } from '@nexus/shared';
 import {
+  and,
+  contactIdentifiers,
   contacts,
   eq,
+  ilike,
   insertAttachment,
   interactions as interactionsTable,
   sessions as sessionsTable,
@@ -47,9 +50,10 @@ export interface PhoneIngestResult {
 export async function ingestPhoneCall(args: {
   audio: Uint8Array;
   mimeType: string;
+  filename: string | null;
   meta: PhoneUploadMeta;
 }): Promise<PhoneIngestResult> {
-  const { audio, mimeType, meta } = args;
+  const { audio, mimeType, filename, meta } = args;
   const db = getDb();
 
   const occurredAt = new Date(meta.startedAt);
@@ -64,6 +68,10 @@ export async function ingestPhoneCall(args: {
     mimeType,
   });
 
+  // Parse the contact name out of the filename BEFORE creating the
+  // interaction so we can stamp it onto rawPayload for future debugging.
+  const parsedCounterparty = parseCounterpartyFromFilename(filename);
+
   const { interaction, inserted } = await upsertInteraction(db, {
     channel: 'phone',
     direction: meta.direction,
@@ -77,6 +85,8 @@ export async function ingestPhoneCall(args: {
       recorder: meta.recorder ?? null,
       storageKey,
       checksum: checksumHex,
+      filename: filename ?? null,
+      parsedCounterparty: parsedCounterparty ?? null,
     },
   });
 
@@ -88,16 +98,18 @@ export async function ingestPhoneCall(args: {
     checksum: checksumHex,
   });
 
-  // Process-pending only attaches an interaction to a session when
-  // extractIdentifier returns a phone/email/handle. For phone calls
-  // where the filename carries a contact name (Android-14+ native
-  // recorder default) the meta.counterparty is null, the extractor
-  // returns null, and the interaction sits orphaned forever. Mirror
-  // the meeting-ingest pattern: pin every new phone interaction to a
-  // synthetic "Phone Calls" contact in its own fresh session so the
-  // transcription + reasoning crons see it.
+  // Resolve the counterparty contact from the filename ("Call recording
+  // <Display Name>_<digits>...") and pin this interaction to a fresh
+  // session under that contact. Without this every recording buckets
+  // into a single catch-all "Phone Calls" contact, which makes Injaz
+  // client/project mapping useless and merges unrelated conversations
+  // into one approval queue.
   if (inserted) {
-    await attachPhoneCallToSession(db, interaction.id, occurredAt);
+    await attachPhoneCallToContactSession(db, {
+      interactionId: interaction.id,
+      occurredAt,
+      counterparty: parsedCounterparty ?? meta.counterparty ?? null,
+    });
   }
 
   if (inserted) {
@@ -132,42 +144,176 @@ export async function ingestPhoneCall(args: {
 }
 
 /**
- * Resolve (or lazily create) the catch-all "Phone Calls" contact and
- * open a fresh session for this recording. Backdate lastActivityAt by
- * 10 min so the next auto-reason tick (default 3 min cooldown) picks
- * the session up immediately. Same pattern as the meeting endpoint —
- * each call is its own conversation.
+ * Extract the counterparty's display name (or phone number) from the
+ * Android call recording filename.
+ *
+ * The Android-14+ native call recorder names files:
+ *   Call recording <Counterparty>_<digits>.<ext>
+ *
+ * `<Counterparty>` is the address-book display name when the caller is
+ * saved on the device, otherwise the dialed/received phone number.
+ * `<digits>` is a yyyyMMdd_HHmmss style timestamp (or shorter sequence
+ * id on some OEM ROMs). Strip both ends and what's left is the contact.
+ *
+ * Examples (after lowercase + diacritics intact for Arabic):
+ *   "Call recording John Doe_250428_1234.m4a"     → "John Doe"
+ *   "Call recording إسلام يوسري_20260428.m4a"     → "إسلام يوسري"
+ *   "Call recording +20123456789_250428.m4a"      → "+20123456789"
+ *   "Call recording Mom 🥰_250428_1234.m4a"        → "Mom 🥰"
+ *   "20260428_134523_audio.m4a" (other recorder)   → null
+ *   "" / null                                       → null
+ *
+ * Returns null when the filename doesn't match the "Call recording …"
+ * pattern — caller falls back to the catch-all contact.
  */
-async function attachPhoneCallToSession(
-  db: ReturnType<typeof getDb>,
-  interactionId: string,
-  occurredAt: Date,
-): Promise<void> {
-  const PHONE_NAME = 'Phone Calls';
+export function parseCounterpartyFromFilename(
+  filename: string | null,
+): string | null {
+  if (!filename) return null;
+  // Strip directory path and extension first.
+  const base = filename.replace(/^.*[\\/]/, '').replace(/\.[A-Za-z0-9]{1,5}$/, '');
 
+  // The "Call recording " prefix is locale-dependent. English ROMs use
+  // "Call recording ", Arabic ROMs use "تسجيل المكالمة "/"تسجيل مكالمة ".
+  // Match case-insensitively and tolerate surrounding whitespace.
+  const m = base.match(
+    /^(?:call recording|تسجيل (?:ال)?مكالم[ةه])\s+(.+?)$/i,
+  );
+  if (!m || !m[1]) return null;
+
+  // Strip the trailing `_<digits>` block(s). Recorders append one or
+  // two underscore-prefixed digit groups (`_yyyyMMdd_HHmmss`, sometimes
+  // just `_seqno`). Iterate so both groups come off.
+  let name = m[1];
+  while (/_\d+$/.test(name)) {
+    name = name.replace(/_\d+$/, '');
+  }
+  name = name.trim();
+  return name.length > 0 ? name : null;
+}
+
+/**
+ * Resolve a contact from the parsed counterparty (display name or
+ * phone number). Looks up existing contacts by:
+ *   1. phone identifier match (when counterparty looks like E.164),
+ *   2. case-insensitive displayName match (otherwise),
+ *   3. lazy-create a new contact stamped with the counterparty.
+ *
+ * Falls back to the catch-all "Phone Calls" contact when no
+ * counterparty was extractable (filename didn't match the pattern).
+ */
+async function resolveContactForCall(
+  db: ReturnType<typeof getDb>,
+  counterparty: string | null,
+): Promise<{ id: string; created: boolean }> {
+  if (!counterparty) {
+    return ensureCatchAllContact(db);
+  }
+
+  // Phone-number-shaped string → match by identifier.
+  const looksLikePhone = /^\+?[0-9][0-9\s\-()]{6,20}$/.test(counterparty);
+  if (looksLikePhone) {
+    const normalized = counterparty.replace(/[\s\-()]/g, '');
+    const [hit] = await db
+      .select({ contactId: contactIdentifiers.contactId })
+      .from(contactIdentifiers)
+      .where(
+        and(
+          eq(contactIdentifiers.kind, 'phone'),
+          eq(contactIdentifiers.value, normalized),
+        ),
+      )
+      .limit(1);
+    if (hit) return { id: hit.contactId, created: false };
+
+    // Create new contact + identifier pair.
+    const [contact] = await db
+      .insert(contacts)
+      .values({
+        displayName: counterparty,
+        notes: 'Auto-created from a phone-call recording filename.',
+      })
+      .returning({ id: contacts.id });
+    if (!contact) throw new Error('failed to create contact for phone number');
+    await db.insert(contactIdentifiers).values({
+      contactId: contact.id,
+      kind: 'phone',
+      value: normalized,
+      verified: false,
+      source: 'phone-recording-filename',
+    });
+    return { id: contact.id, created: true };
+  }
+
+  // Display-name string → case-insensitive match. Uses ilike with the
+  // value escaped so any LIKE wildcards in the contact name are literal.
+  const escaped = counterparty.replace(/[\\%_]/g, (c) => '\\' + c);
+  const [hit] = await db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(ilike(contacts.displayName, escaped))
+    .limit(1);
+  if (hit) return { id: hit.id, created: false };
+
+  const [contact] = await db
+    .insert(contacts)
+    .values({
+      displayName: counterparty,
+      notes: 'Auto-created from a phone-call recording filename.',
+    })
+    .returning({ id: contacts.id });
+  if (!contact) throw new Error('failed to create contact for display name');
+  return { id: contact.id, created: true };
+}
+
+async function ensureCatchAllContact(
+  db: ReturnType<typeof getDb>,
+): Promise<{ id: string; created: boolean }> {
+  const PHONE_NAME = 'Phone Calls';
   let [row] = await db
     .select({ id: contacts.id })
     .from(contacts)
     .where(eq(contacts.displayName, PHONE_NAME))
     .limit(1);
+  if (row) return { id: row.id, created: false };
+  const created = await db
+    .insert(contacts)
+    .values({
+      displayName: PHONE_NAME,
+      notes: 'Catch-all bucket for phone recordings whose filename did not match the expected pattern.',
+    })
+    .returning({ id: contacts.id });
+  row = created[0];
+  if (!row) throw new Error('failed to create Phone Calls catch-all contact');
+  return { id: row.id, created: true };
+}
 
-  if (!row) {
-    const created = await db
-      .insert(contacts)
-      .values({
-        displayName: PHONE_NAME,
-        notes: 'Auto-created bucket for phone-call recordings ingested from the Android app.',
-      })
-      .returning({ id: contacts.id });
-    row = created[0];
-    if (!row) throw new Error('failed to create Phone Calls contact');
+/**
+ * Resolve the counterparty contact and open a fresh session for this
+ * recording. Backdates lastActivityAt by 10 min so the next auto-reason
+ * tick (default 3 min cooldown) picks the session up immediately. Same
+ * pattern as the meeting endpoint — each call is its own conversation.
+ */
+async function attachPhoneCallToContactSession(
+  db: ReturnType<typeof getDb>,
+  args: { interactionId: string; occurredAt: Date; counterparty: string | null },
+): Promise<void> {
+  const { interactionId, occurredAt, counterparty } = args;
+
+  const { id: contactId, created } = await resolveContactForCall(db, counterparty);
+  if (created && counterparty) {
+    log.info('phone.contact.auto_created', {
+      interactionId,
+      contactId,
+      counterparty,
+    });
   }
 
   const backdated = new Date(occurredAt.getTime() - 10 * 60 * 1000);
   const [session] = await db
     .insert(sessionsTable)
     .values({
-      contactId: row.id,
+      contactId,
       state: 'open',
       openedAt: occurredAt,
       lastActivityAt: backdated,

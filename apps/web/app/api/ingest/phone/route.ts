@@ -113,6 +113,13 @@ export async function POST(req: NextRequest) {
       const result = await ingestPhoneCall({
         audio: bytes,
         mimeType: audio.type || 'audio/mp4',
+        // Original filename from the device — used to extract the
+        // counterparty contact name. Android-14+ native call recorder
+        // names files like `Call recording <Display Name>_<digits>...`
+        // and the bit between "Call recording " and "_<digits>" is the
+        // person we spoke to. Without this, every call buckets into a
+        // single "Phone Calls" catch-all contact.
+        filename: typeof audio.name === 'string' ? audio.name : null,
         meta: meta.data,
       });
       log.info('phone.webhook.ingested', {
