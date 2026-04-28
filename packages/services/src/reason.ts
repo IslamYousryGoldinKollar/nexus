@@ -288,6 +288,23 @@ include it in the output):
              STILL a task if Islam only promised ("هابعتلك", "I'll
              send", "noted, will share"). Promises ≠ delivery.
 
+             Client-promised deliverable (CHASE pattern) — sometimes
+             the CLIENT commits to sending Islam something ("هرسل
+             لحضرتك المنيو", "I'll forward you the doc", "بعتهالك
+             النهاردة"). Create a follow-up task in this case too:
+             title in the form "Chase {client} for {what they promised}".
+             Default dueDateGuess to whatever timeframe they named
+             ("today/النهاردة" → today, "tomorrow/بكرة" → tomorrow,
+             "this week" → +5d), else +2 business days. Assignee
+             defaults to Islam. Skip only if Islam's outbound shows
+             they already delivered.
+
+             Meeting / call requests — if a client proposes a specific
+             time ("call at 12:00", "Tuesday 3pm Cairo time") and
+             Islam hasn't yet confirmed in writing, create a task
+             "Confirm call with {client} at {time}". If Islam already
+             replied with explicit yes/no, ZERO tasks (resolved).
+
            When in doubt, KEEP the task — a duplicate is worse than
            a dropped follow-up.
 

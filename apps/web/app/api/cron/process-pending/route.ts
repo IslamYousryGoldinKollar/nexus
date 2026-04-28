@@ -97,11 +97,35 @@ export async function GET(req: NextRequest) {
         if (matched) {
           contactId = matched.contact.id;
         } else {
+          // WhatsApp opt-in gate (#4 stage 1). When
+          // WHATSAPP_DEFAULT_ALLOW=false, every freshly auto-created
+          // WhatsApp contact starts with allow_action=false (and
+          // allow_transcription=false). The interaction lands in the
+          // DB but the auto-reason and auto-transcribe crons skip it
+          // — operator must flip the toggle in /contacts to start
+          // processing. Other channels (email, phone) keep the
+          // permissive default so we don't accidentally silence
+          // legitimate work.
+          const waDefaultAllow =
+            (process.env.WHATSAPP_DEFAULT_ALLOW ?? 'true').toLowerCase() !== 'false';
+          const isWhatsApp = row.channel === 'whatsapp';
+          const overrideAllow = isWhatsApp && !waDefaultAllow ? false : undefined;
           const created = await createContactWithIdentifier(db, {
             displayName: identified.displayHint ?? identified.value,
             identifier: { kind: identified.kind, value: identified.value },
             source: `cron:${row.channel}`,
+            ...(overrideAllow !== undefined
+              ? { allowAction: overrideAllow, allowTranscription: overrideAllow }
+              : {}),
           });
+          if (overrideAllow === false) {
+            log.info('cron.process-pending.contact_auto_blocked', {
+              contactId: created.contact.id,
+              channel: row.channel,
+              identifier: identified.value,
+              reason: 'WHATSAPP_DEFAULT_ALLOW=false',
+            });
+          }
           contactId = created.contact.id;
         }
       } catch (err) {

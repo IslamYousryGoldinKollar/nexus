@@ -56,11 +56,24 @@ export async function createContactWithIdentifier(
     identifier: IdentityLookupKey;
     source?: string;
     accountId?: string | null;
+    /**
+     * When false, the new contact starts with `allow_action=false` so
+     * the auto-reason cron skips them until the operator manually flips
+     * the toggle in /contacts. Used by WhatsApp ingest to whitelist-by-
+     * default when WHATSAPP_DEFAULT_ALLOW=false. Defaults to true to
+     * preserve existing behavior for all other channels.
+     */
+    allowAction?: boolean;
+    allowTranscription?: boolean;
   },
 ): Promise<{ contact: Contact; identifier: ContactIdentifier }> {
   const contactRow: NewContact = {
     displayName: args.displayName,
     accountId: args.accountId ?? null,
+    ...(args.allowAction !== undefined ? { allowAction: args.allowAction } : {}),
+    ...(args.allowTranscription !== undefined
+      ? { allowTranscription: args.allowTranscription }
+      : {}),
   };
   const identifierRow: Omit<NewContactIdentifier, 'contactId'> = {
     kind: args.identifier.kind,
