@@ -189,3 +189,77 @@ The `/api/admin/{direct-process,direct-reasoning,process-backlog,batch-transcrib
 **After the next prod deploy that includes commit `d420e9a`:** verify Inngest is delivering events end-to-end (send a real WhatsApp message and watch the function-run dashboard). Once confirmed, the `direct-*`, `process-backlog`, `batch-transcribe`, `trigger-reasoning`, and `manual-resolve` endpoints can be deleted — they duplicate Inngest function logic and should not be a permanent surface.
 
 Keep `/api/admin/{health,replay-interaction}` regardless — they are operator tools referenced in playbooks above.
+
+## Roadmap: contact merge (issue #3)
+
+Several conversations show up as separate contacts because each channel
+auto-creates a row keyed by its identifier:
+
+  - email ingest → contact named `lidia.sami@eand.com.eg`
+  - WhatsApp     → contact named `Lidia Sami` (with `whatsapp_wa_id` identifier)
+  - phone        → contact named `Lidia` (from call recording filename)
+
+Three of those are the same person. We need a UI + API to merge them:
+
+1. **Schema:** no migration needed. `contact_identifiers` already supports
+   N identifiers per contact; sessions/interactions point at `contact_id`;
+   `accounts` is via FK on contacts.
+2. **Backend:** `POST /api/contacts/merge { keep: <uuid>, drop: <uuid[]> }`:
+     a. move all `contact_identifiers` from each `drop[i]` to `keep`
+        (UPDATE WHERE contact_id = drop[i]; UNIQUE(kind,value) makes
+         duplicates impossible — handle the conflict by deleting the
+         loser identifier).
+     b. reassign sessions: `UPDATE sessions SET contact_id = keep WHERE
+        contact_id = ANY(drop)`.
+     c. delete the dropped contacts (CASCADE handles the rest).
+   Wrap in a single transaction.
+3. **UI:** at `/contacts`, add a "Merge" mode — multi-select rows, pick
+   which one to keep (default = the one with `injaz_party_name` set),
+   confirm modal with side-by-side identifier preview, fire the API.
+4. **Auto-suggest pass:** weekly cron that looks for likely-same-person
+   pairs (same phone in identifiers across two contacts; same email
+   stem like `lidia.sami` matches displayName containing "Lidia Sami")
+   and surfaces them in a "Suggested merges" tab. Don't auto-merge —
+   require operator approval.
+
+Estimated effort: ~3 hours. Highest-value first cut is just step 2 + a
+minimal UI button on the existing contacts table.
+
+## Roadmap: WhatsApp per-contact opt-in (issue #4)
+
+Mirror the call-recording opt-in pattern for WhatsApp. The user wants
+to whitelist specific WA numbers so only their messages are processed.
+
+Current state:
+- `contacts.allow_action` already exists (now respected post-commit
+  6096b82). But it's *off by default = false* for the user's intent —
+  current default is `true`.
+- New WA numbers from unknown senders auto-create a contact via
+  `pending_identifiers` resolution.
+
+Two-stage rollout:
+
+**Stage 1 (server-only, ~1h):**
+  - Add an env-var `WHATSAPP_DEFAULT_ALLOW = false` (default true for
+    backwards compat).
+  - When the WA ingest creates a new contact for an unseen
+    `whatsapp_wa_id`, set `allow_action = WHATSAPP_DEFAULT_ALLOW`.
+  - Existing contacts unchanged. Operator manually flips the toggle
+    in `/contacts` for whoever they want active.
+
+**Stage 2 (Android-driven import, ~1 day):**
+  - In the Android app's recording-opt-in flow, also ask for
+    `READ_CONTACTS` (already requested for call attribution) and
+    upload the user's selected contacts to a new endpoint
+    `POST /api/contacts/import { contacts: [{ name, phone, email }] }`.
+  - Server upserts contacts with `allow_action = true` and identifiers
+    by phone/email.
+  - WA ingest then matches incoming `whatsapp_wa_id` (which is the
+    E.164 phone) against `contact_identifiers WHERE kind='phone'`, and
+    only processes if a match exists *and* `allow_action = true`.
+  - Unknown senders get logged into `pending_identifiers` like today
+    but their messages are stored only — not transcribed, not reasoned.
+
+Recommend Stage 1 first — single env-var flip plus a 5-line patch to
+WA ingest, gives the user the ability to whitelist by toggling. Stage
+2 is the polished version.
