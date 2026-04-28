@@ -39,6 +39,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.goldinkollar.nexus.data.ContactEntry
 import com.goldinkollar.nexus.data.ContactsRepository
 import com.goldinkollar.nexus.data.SessionStore
 import kotlinx.coroutines.Dispatchers
@@ -64,7 +65,7 @@ fun ContactPolicyScreen(onBack: () -> Unit) {
 
     var hasPerm by remember { mutableStateOf(hasContactsPermission(context)) }
     var filterEnabled by remember { mutableStateOf(store.recordingFilterEnabled) }
-    var contacts by remember { mutableStateOf<List<ContactsRepository.ContactEntry>>(emptyList()) }
+    var contacts by remember { mutableStateOf<List<ContactEntry>>(emptyList()) }
     val opted = remember { mutableStateListOf<String>().apply { addAll(store.optedInRecordingPhones()) } }
     var query by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
@@ -203,7 +204,7 @@ fun ContactPolicyScreen(onBack: () -> Unit) {
 
 @Composable
 private fun ContactRow(
-    entry: ContactsRepository.ContactEntry,
+    entry: ContactEntry,
     isAnyOpted: Boolean,
     onToggle: (Boolean) -> Unit,
 ) {
